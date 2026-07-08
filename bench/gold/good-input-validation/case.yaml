@@ -1,0 +1,9 @@
+id: G1
+title: Validate email on signup
+description: >
+  Reject signups whose email fails a basic format check, returning 400 with a
+  clear message. Cover the valid and invalid cases with tests.
+label: approve
+note: >
+  Clean, in-scope change with a real assertion added. The council should
+  approve it — a rejection here is a false-reject (noise).

@@ -5,6 +5,7 @@ import sys
 
 import yaml
 
+from agent_team.bench import run_bench
 from agent_team.decomposer import DecompositionRejected
 from agent_team.orchestrator import run
 from agent_team.runner import BudgetExceeded
@@ -16,6 +17,11 @@ def main() -> None:
     )
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument(
+        "--bench", nargs="?", const="bench/gold", default=None, metavar="GOLD_DIR",
+        help="Benchmark the council against a labeled gold set instead of "
+             "running the build loop (default dir: bench/gold).",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -26,6 +32,10 @@ def main() -> None:
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
+
+    if args.bench is not None:
+        asyncio.run(run_bench(cfg, args.bench))
+        return
 
     try:
         asyncio.run(run(cfg))

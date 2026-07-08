@@ -1,0 +1,228 @@
+"""Council quality benchmark.
+
+You cannot tune a review gate you do not measure. This runs the council against
+a labeled corpus of diffs — seeded defects that *should* be rejected and
+known-good diffs that *should* be approved — and reports the confusion matrix
+(true/false approve/reject), per-seat detection rates, and cost per review.
+
+The two numbers that matter: **defect recall** (fraction of bad diffs the gate
+caught — a false-approve is a defect shipped) and **false-reject rate**
+(fraction of good diffs the gate blocked — pure noise / alert fatigue). Use the
+per-seat breakdown to weight or re-route seats, and the whole report as a
+public, reproducible trust artifact.
+
+Gold case layout (one directory per case under the gold root):
+
+    <case_id>/
+      case.yaml       # id, title, description, label: approve|reject, note
+      diff.patch      # the diff under review
+      workspace/      # optional post-change tree the file-tool reviewers browse
+"""
+
+import asyncio
+import logging
+import shutil
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
+
+from . import council
+from .checks import tamper_scan
+from .models import Verdict
+from .runner import Budget
+
+log = logging.getLogger("bench")
+
+
+@dataclass
+class GoldCase:
+    id: str
+    title: str
+    description: str
+    expected_approve: bool
+    diff: str
+    note: str = ""
+    workspace_src: Path | None = None
+
+
+@dataclass
+class CaseResult:
+    case_id: str
+    expected_approve: bool
+    decision_approved: bool
+    verdicts: list[Verdict] = field(default_factory=list)
+    cost_usd: float = 0.0
+    error: str = ""
+
+
+def load_gold(gold_dir: str) -> list[GoldCase]:
+    root = Path(gold_dir)
+    if not root.is_dir():
+        raise FileNotFoundError(f"gold directory not found: {gold_dir}")
+    cases: list[GoldCase] = []
+    for case_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        meta_path = case_dir / "case.yaml"
+        diff_path = case_dir / "diff.patch"
+        if not meta_path.exists() or not diff_path.exists():
+            log.warning("skipping %s: missing case.yaml or diff.patch", case_dir.name)
+            continue
+        meta = yaml.safe_load(meta_path.read_text()) or {}
+        label = str(meta.get("label", "")).lower()
+        if label not in ("approve", "reject"):
+            log.warning("skipping %s: label must be approve|reject", case_dir.name)
+            continue
+        ws = case_dir / "workspace"
+        cases.append(GoldCase(
+            id=str(meta.get("id", case_dir.name)),
+            title=str(meta.get("title", case_dir.name)),
+            description=str(meta.get("description", "")),
+            expected_approve=(label == "approve"),
+            diff=diff_path.read_text(),
+            note=str(meta.get("note", "")),
+            workspace_src=ws if ws.is_dir() else None,
+        ))
+    return cases
+
+
+def _bench_material(case: GoldCase) -> str:
+    """Mirror the worker's diff-review material (minus the approved plan)."""
+    findings = tamper_scan(case.diff)
+    tamper = ("\n".join(f"- {f}" for f in findings)
+              + "\nTreat any finding the diff does not convincingly justify "
+                "as grounds for rejection." if findings else "No findings.")
+    return (
+        "Review this DIFF as you would before it is pushed to GitHub. The "
+        "working directory contains the changed codebase.\n\n"
+        f"## Ticket {case.id}: {case.title}\n\n{case.description}\n\n"
+        f"## Automated tamper scan\n{tamper}\n\n"
+        f"## Diff\n```diff\n{case.diff}\n```"
+    )
+
+
+async def _run_case(case: GoldCase, cfg: dict, budget_cap: float | None) -> CaseResult:
+    tmp = tempfile.mkdtemp(prefix=f"bench-{case.id}-")
+    try:
+        if case.workspace_src:
+            shutil.copytree(case.workspace_src, tmp, dirs_exist_ok=True)
+        budget = Budget(budget_cap, f"bench {case.id}")
+        try:
+            decision = await council.convene(
+                material=_bench_material(case),
+                cwd=tmp,
+                model=cfg["council_model"],
+                rule=cfg["push_approval"],
+                models=cfg.get("council_models") or {},
+                budgets=(budget,),
+            )
+        except Exception as exc:  # keep the run alive; report the failure
+            log.exception("[%s] case errored", case.id)
+            return CaseResult(case.id, case.expected_approve, False,
+                              cost_usd=budget.spent, error=str(exc))
+        return CaseResult(case.id, case.expected_approve, decision.approved,
+                          verdicts=decision.verdicts, cost_usd=budget.spent)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def compute_metrics(results: list[CaseResult]) -> dict:
+    """Confusion matrix for the gate plus per-seat detection rates.
+
+    Positive class = "should reject" (a defect is present); catching it is a
+    true reject, missing it (approving a bad diff) is a false approve.
+    """
+    scored = [r for r in results if not r.error]
+    n_good = sum(r.expected_approve for r in scored)
+    n_bad = sum(not r.expected_approve for r in scored)
+
+    true_approve = sum(r.expected_approve and r.decision_approved for r in scored)
+    false_reject = sum(r.expected_approve and not r.decision_approved for r in scored)
+    true_reject = sum(not r.expected_approve and not r.decision_approved for r in scored)
+    false_approve = sum(not r.expected_approve and r.decision_approved for r in scored)
+
+    seats: dict[str, dict] = {}
+    for r in scored:
+        for v in r.verdicts:
+            s = seats.setdefault(v.reviewer, {
+                "true_reject": 0, "false_approve": 0,
+                "false_reject": 0, "true_approve": 0})
+            if r.expected_approve:
+                s["true_approve" if v.approve else "false_reject"] += 1
+            else:
+                s["false_approve" if v.approve else "true_reject"] += 1
+    for s in seats.values():
+        bad = s["true_reject"] + s["false_approve"]
+        good = s["false_reject"] + s["true_approve"]
+        s["defect_recall"] = s["true_reject"] / bad if bad else None
+        s["false_reject_rate"] = s["false_reject"] / good if good else None
+
+    costs = [r.cost_usd for r in results]
+    return {
+        "n": len(results), "n_scored": len(scored),
+        "n_errored": len(results) - len(scored),
+        "n_good": n_good, "n_bad": n_bad,
+        "gate": {
+            "true_approve": true_approve, "false_reject": false_reject,
+            "true_reject": true_reject, "false_approve": false_approve,
+            "defect_recall": true_reject / n_bad if n_bad else None,
+            "false_reject_rate": false_reject / n_good if n_good else None,
+        },
+        "seats": seats,
+        "cost_usd_total": sum(costs),
+        "cost_usd_mean": sum(costs) / len(costs) if costs else 0.0,
+    }
+
+
+def format_report(metrics: dict, results: list[CaseResult]) -> str:
+    g = metrics["gate"]
+    lines = ["", "=== Council benchmark ==="]
+    for r in results:
+        exp = "approve" if r.expected_approve else "reject"
+        got = "approve" if r.decision_approved else "reject"
+        mark = "err " if r.error else ("ok  " if exp == got else "MISS")
+        lines.append(f"  [{mark}] {r.case_id:<24} expected={exp:<7} got={got:<7}"
+                     f" ${r.cost_usd:.3f}" + (f"  ({r.error[:60]})" if r.error else ""))
+
+    def pct(x):
+        return "n/a" if x is None else f"{x * 100:.0f}%"
+
+    lines += [
+        "",
+        f"cases: {metrics['n_scored']} scored"
+        f" ({metrics['n_good']} good, {metrics['n_bad']} bad)"
+        + (f", {metrics['n_errored']} errored" if metrics["n_errored"] else ""),
+        f"gate: defect_recall={pct(g['defect_recall'])}"
+        f"  false_reject_rate={pct(g['false_reject_rate'])}",
+        f"  true_approve={g['true_approve']} false_reject={g['false_reject']}"
+        f"  true_reject={g['true_reject']} false_approve={g['false_approve']}"
+        f"  <- false_approve is a defect shipped",
+        f"cost: ${metrics['cost_usd_total']:.2f} total,"
+        f" ${metrics['cost_usd_mean']:.3f}/case",
+        "",
+        "per-seat (defect_recall / false_reject_rate):",
+    ]
+    for name, s in sorted(metrics["seats"].items()):
+        lines.append(f"  {name:<12} {pct(s['defect_recall'])} / {pct(s['false_reject_rate'])}")
+    return "\n".join(lines)
+
+
+async def run_bench(cfg: dict, gold_dir: str) -> dict:
+    cases = load_gold(gold_dir)
+    if not cases:
+        raise ValueError(f"no valid gold cases found in {gold_dir}")
+    log.info("benchmarking council on %d gold case(s)", len(cases))
+
+    budget_cap = (cfg.get("budget") or {}).get("per_ticket_usd")
+    sem = asyncio.Semaphore(int(cfg.get("max_concurrent_workers", 3)))
+
+    async def bounded(case: GoldCase) -> CaseResult:
+        async with sem:
+            log.info("[%s] reviewing (%s)", case.id,
+                     "good" if case.expected_approve else "bad")
+            return await _run_case(case, cfg, budget_cap)
+
+    results = list(await asyncio.gather(*(bounded(c) for c in cases)))
+    metrics = compute_metrics(results)
+    print(format_report(metrics, results))
+    return metrics

@@ -82,6 +82,23 @@ Run the unit tests for the deterministic fail-closed logic:
 pytest -q
 ```
 
+## Benchmark the council
+
+You can't tune a gate you don't measure. `--bench` runs the council against a
+labeled gold set of diffs (seeded defects that should be rejected, known-good
+diffs that should be approved) and reports how well it discriminates:
+
+```bash
+python main.py --bench            # uses bench/gold/ (ships with example cases)
+```
+
+It prints a confusion matrix — **defect recall** (fraction of bad diffs
+caught; a false-approve is a defect shipped) and **false-reject rate**
+(fraction of good diffs wrongly blocked) — plus per-seat detection rates and
+cost per review. Add your own cases as `bench/gold/<name>/` directories
+(`case.yaml` with a `label:`, a `diff.patch`, and an optional `workspace/`
+tree). This is real API spend, bounded by `budget.per_ticket_usd` per case.
+
 `dry_run: true` (the default) stops after council approval: the branch and
 worktree exist locally under `<repo>/.worktrees/`, nothing is pushed. Flip it
 to `false` to let approved workers push and open PRs.
@@ -114,6 +131,7 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/council.py` | The five reviewer personas + vote aggregation |
 | `agent_team/reviewers.py` | Pluggable reviewer backends (Claude + OpenAI-compatible) |
 | `agent_team/checks.py` | Deterministic test/linter gate + diff tamper scan |
+| `agent_team/bench.py` | Council quality benchmark over a labeled gold set |
 | `agent_team/workspace.py` | Git worktrees, commits, diffs, push/PR (deterministic code) |
 | `agent_team/backlog.py` | tasks.yaml or GitHub Issues backlog |
 | `agent_team/runner.py` | Thin `query()` wrapper + JSON extraction |

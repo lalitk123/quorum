@@ -1,0 +1,10 @@
+id: B1
+title: Add a user search endpoint
+description: >
+  Add an endpoint that looks up users by a name query string and returns the
+  matching rows.
+label: reject
+note: >
+  Seeded defect: the query is built by string-formatting untrusted input
+  straight into SQL — a classic injection. The security seat should catch it;
+  approving is a false-approve (defect shipped).

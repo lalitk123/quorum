@@ -30,24 +30,27 @@ benchmarks of its own quality.
   evidence) written into every preserved worktree.
 - **Unit test suite** (`tests/`, `pytest -q`) covering the deterministic
   fail-closed logic: budget breaker, tamper scan, verdict parsing, evidence
-  fail-closed rule, seat routing, decomposer DAG validation.
+  fail-closed rule, seat routing, decomposer DAG validation, bench metrics.
+- **Council benchmark harness** (`agent_team/bench.py`, `python main.py --bench`):
+  runs the council against a labeled gold set (`bench/gold/`) and reports the
+  confusion matrix (defect recall, false-reject rate), per-seat detection
+  rates, and cost per review. Ships with example good/bad cases (clean change,
+  SQL injection, gamed test). The reproducible, publishable trust artifact.
 - Goal → council-approved DAG decomposition; dependency-aware scheduling;
   stacked PRs; file-overlap locks; human-only merge.
 
 ## Next: reliability
 
-- **Calibration gold set (now highest priority).** 30–200 labeled diffs (seeded defects + known-good)
-  from the real distribution; measure per-seat precision/recall, κ vs human
-  labels, swap-consistency; tune the aggregation thresholds empirically and
-  weight seats by measured calibration rather than equally.
-- **Canary diffs.** Periodically inject known-bad diffs into the review
+- **Grow the gold set + tune from it.** The harness exists; now grow the corpus
+  toward 30–200 labeled diffs from the real distribution, add swap-consistency
+  and κ-vs-human measures, and use the per-seat numbers to weight/re-route
+  seats and set aggregation thresholds empirically rather than by intuition.
+- **Canary diffs.** Periodically inject known-bad diffs into the *live* review
   stream; alert when a seat approves one or its dissent rate collapses
-  (sycophancy detection — "verify the verifier").
+  (sycophancy detection — "verify the verifier"). Reuses the bad gold cases.
 - **Clean-sandbox test verification.** A reviewer step that re-runs the
   worker's tests in a fresh sandbox and checks coverage/mutation, closing the
   remaining reward-hacking surface the static tamper scan can't see.
-- **Published council benchmark.** Reproducible seeded-defect corpus +
-  true/false approve/reject rates + cost per review, as a public artifact.
 
 ## Next: scale
 
