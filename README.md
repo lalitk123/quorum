@@ -171,7 +171,32 @@ python main.py --canary            # every bad gold case vs the live council, on
 ```
 
 Each canary is one extra council review, charged to the run budget and skipped
-(never fatal) if the budget is tight.
+(never fatal) if the budget is tight. Every canary review also persists a labeled
+per-seat judgment, which feeds both the reliability model and drift detection.
+
+## Reviewer drift detection (the alarm rings itself)
+
+A canary that fires once tells you the gate is healthy *now*. To catch a reviewer
+*degrading* — a model update, creeping sycophancy — you need the outcomes over
+time. Each seat's canary results form a miss stream, and a **CUSUM** (Page's
+sequential test) raises an alarm the moment a seat's misses accumulate past a
+threshold — with the observation index where drift began:
+
+```bash
+python main.py --drift             # exits non-zero if any seat is degrading
+```
+
+```
+=== Reviewer drift (CUSUM over canary outcomes) ===
+  seat          obs  misses  miss_rate  cusum_peak  status
+  qa             16       6       38%      13.82  DRIFT ALARM @obs 11
+  security       16       0        0%       0.00  stable
+```
+
+A lone miss decays back to zero (no false alarm on noise); sustained degradation
+trips the threshold. `--drift` is a drop-in CI/cron gate on the gate itself — the
+answer to "if the security seat starts approving SQL injections, does anyone
+notice?" is now *yes, automatically*.
 
 ## Graduated review strictness (risk-aware)
 
@@ -246,6 +271,7 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/canary.py` | Live known-bad canary injection (verify the verifier) |
 | `agent_team/reliability.py` | Reviewer reliability model + Bayesian trust aggregation (RQ1) |
 | `agent_team/judgments.py` | Persistent labeled reviewer-judgment log (the dataset) |
+| `agent_team/drift.py` | Continuous reviewer-drift detection via CUSUM (RQ3) |
 | `agent_team/receipts.py` | Ed25519-signed, hash-chained audit receipts + verifier |
 | `agent_team/workspace.py` | Git worktrees, commits, diffs, push/PR (deterministic code) |
 | `agent_team/backlog.py` | tasks.yaml or GitHub Issues backlog |

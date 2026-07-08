@@ -22,10 +22,10 @@ research questions organize the work:
 - **RQ2 — Can we adaptively pick reviewers to maximize defect recall per dollar?**
   Condition the reliability estimates on the change (bug type, language, risk
   class) and select the seats that buy the most detection per dollar.
-- **RQ3 — Can we detect reviewer degradation automatically?** The canary injector
-  exists; persist its outcomes as a per-seat time series and run a sequential /
-  change-point test so a seat that starts approving known-bad diffs trips an
-  alert on its own.
+- **RQ3 — Can we detect reviewer degradation automatically?** *(Shipped:
+  `drift.py` — canary outcomes persist as a per-seat time series; a Bernoulli
+  CUSUM raises a self-alarm, with the drift onset index, when a seat starts
+  approving known-bad diffs. See Done.)*
 
 The enabler for all three is a **free labeled-data engine**: gold cases,
 canaries, and mutants are defective *by construction*, so every seat verdict on
@@ -78,7 +78,16 @@ the methodology + infrastructure, with results that sharpen as the log grows.
   below a healthy floor (the leading drift indicator), recording which seats
   were fooled for re-routing. Catches runtime sycophancy/model drift a one-time
   benchmark cannot. Charged to the run budget, never fatal to a real ticket;
-  cadence and alert logic are deterministic and unit-tested.
+  cadence and alert logic are deterministic and unit-tested. Every canary review
+  now persists per-seat labeled judgments, feeding both RQ1 and RQ3.
+- **Continuous reviewer-drift detection** (RQ3: `agent_team/drift.py`,
+  `python main.py --drift`). Each seat's canary outcomes form a Bernoulli miss
+  stream; a one-sided Page's CUSUM (log-likelihood ratio between a healthy miss
+  rate `p0` and a degraded rate `p1`) raises a self-alarm — with the observation
+  index where drift began — when a seat starts approving known-bad canaries. A
+  lone miss decays away; sustained degradation trips the threshold. The `--drift`
+  command exits non-zero if any seat is drifting (a CI/cron gate on the gate
+  itself). Deterministic, unit-tested against hand-computed CUSUM trajectories.
 - **Signed audit receipts** (`agent_team/receipts.py`,
   `python main.py --verify-receipts`). Every trust-boundary action — dry-run
   approval, push, PR open — emits an Ed25519-signed receipt (ticket, commit SHA,

@@ -39,6 +39,11 @@ def main() -> None:
              "specificity with credible intervals) from the judgment log and exit. "
              "Defaults to reliability.log_file from the config.",
     )
+    parser.add_argument(
+        "--drift", nargs="?", const="", default=None, metavar="JUDGMENT_LOG",
+        help="Run CUSUM drift detection over each seat's canary outcomes and exit "
+             "non-zero if any seat is degrading. Defaults to reliability.log_file.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -74,6 +79,21 @@ def main() -> None:
             "log_file", ".agent_team/judgments.jsonl")
         model = reliability.estimate_reliability(judgments.load_judgments(path))
         print(reliability.format_reliability(model))
+        return
+
+    if args.drift is not None:
+        from agent_team import drift, judgments
+        path = args.drift or (cfg.get("reliability") or {}).get(
+            "log_file", ".agent_team/judgments.jsonl")
+        d = cfg.get("drift") or {}
+        results = drift.detect_drift(
+            judgments.load_judgments(path),
+            p0=float(d.get("baseline_miss_rate", 0.05)),
+            p1=float(d.get("degraded_miss_rate", 0.5)),
+            threshold=float(d.get("threshold", 4.0)))
+        print(drift.format_drift(results))
+        if any(r.alarm for r in results.values()):
+            sys.exit(1)
         return
 
     try:

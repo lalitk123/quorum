@@ -83,6 +83,14 @@ canary:
 reliability:
   log_file: .agent_team/judgments.jsonl
 
+# Continuous drift detection (RQ3): a CUSUM over each seat's canary outcomes (read
+# from reliability.log_file). A seat that starts approving known-bad canaries trips
+# an alarm on its own. `python main.py --drift` exits non-zero if any seat drifts.
+drift:
+  baseline_miss_rate: 0.05     # p0: a healthy seat rarely misses a known-bad canary
+  degraded_miss_rate: 0.5      # p1: the degraded miss rate to catch quickly
+  threshold: 4.0               # CUSUM alarm threshold (higher = fewer false alarms)
+
 # Backlog source — defaults to autonomous goal mode: a decomposer agent turns
 # goal.md into a ticket backlog (council-reviewed) and the team builds it.
 backlog:

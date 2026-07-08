@@ -24,8 +24,9 @@ skipped (never fatal) if the budget is tight.
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
-from . import bench
+from . import bench, judgments
 from .models import Verdict
 from .runner import Budget, BudgetExceeded
 
@@ -81,11 +82,12 @@ class CanaryMonitor:
     """
 
     def __init__(self, cases: list, sample_every: int, min_dissent: int,
-                 budget_cap: float | None):
+                 budget_cap: float | None, judgment_log: str | None = None):
         self.cases = cases
         self.sample_every = sample_every
         self.min_dissent = min_dissent
         self.budget_cap = budget_cap
+        self.judgment_log = judgment_log
         self.results: list[CanaryResult] = []
         self._reviews = 0
         self._idx = 0
@@ -136,10 +138,26 @@ class CanaryMonitor:
         if case_result.error:
             return CanaryResult(case.id, False, [], [], error=case_result.error,
                                 cost_usd=case_result.cost_usd)
+        self._log_judgments(case, case_result.verdicts)
         result = evaluate_canary(case.id, case_result.decision_approved,
                                  case_result.verdicts, self.min_dissent)
         result.cost_usd = case_result.cost_usd
         return result
+
+    def _log_judgments(self, case, verdicts) -> None:
+        """Persist each seat's verdict on this known-bad canary (label=defect) so
+        it feeds both the reliability model (RQ1) and the drift time series (RQ3)."""
+        if not self.judgment_log or not verdicts:
+            return
+        ts = datetime.now(timezone.utc).isoformat()
+        rows = [{"seat": v.reviewer,
+                 "verdict": "approve" if v.approve else "reject",
+                 "label": "defect", "source": "canary",
+                 "case_id": case.id, "timestamp": ts} for v in verdicts]
+        try:
+            judgments.append_judgments(self.judgment_log, rows)
+        except OSError as exc:
+            log.warning("could not persist canary judgments: %s", exc)
 
 
 def build_monitor(cfg: dict) -> CanaryMonitor | None:
@@ -158,6 +176,7 @@ def build_monitor(cfg: dict) -> CanaryMonitor | None:
         sample_every=int(canary_cfg.get("sample_every", 5)),
         min_dissent=int(canary_cfg.get("min_dissent", 2)),
         budget_cap=budget_cap,
+        judgment_log=(cfg.get("reliability") or {}).get("log_file"),
     )
 
 
@@ -189,7 +208,8 @@ async def run_canary_sweep(cfg: dict, gold_dir: str) -> list[CanaryResult]:
     min_dissent = int((cfg.get("canary") or {}).get("min_dissent", 2))
     budget_cap = (cfg.get("budget") or {}).get("per_ticket_usd")
     monitor = CanaryMonitor(cases, sample_every=1, min_dissent=min_dissent,
-                            budget_cap=budget_cap)
+                            budget_cap=budget_cap,
+                            judgment_log=(cfg.get("reliability") or {}).get("log_file"))
     sem = asyncio.Semaphore(int(cfg.get("max_concurrent_workers", 3)))
 
     async def one(case) -> CanaryResult:
