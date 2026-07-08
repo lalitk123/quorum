@@ -45,8 +45,10 @@ class FileLocks:
 
 
 async def _load_tickets(cfg: dict) -> list[Ticket]:
-    if cfg["backlog"]["source"] == "goal":
-        goal = Path(cfg["backlog"]["goal_file"]).read_text()
+    backlog_cfg = cfg.get("backlog") or {}
+    # Autonomous goal mode is the default: no backlog config needed, just goal.md.
+    if backlog_cfg.get("source", "goal") == "goal":
+        goal = Path(backlog_cfg.get("goal_file", "goal.md")).read_text()
         log.info("goal mode: decomposing goal into tickets")
         tickets = await decompose(cfg, goal)
         for t in tickets:

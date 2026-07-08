@@ -53,10 +53,15 @@ Prerequisites:
 
 ## Run
 
+Autonomous goal mode is the default: write your goal + acceptance criteria in
+`goal.md`, point `repo_path` at the target clone, and run —
+
 ```bash
-# Edit config.yaml: repo_path, backlog, models, concurrency
 python main.py --config config.yaml
 ```
+
+To feed hand-written tickets or GitHub issues instead, set `backlog.source`
+to `file` or `github` in `config.yaml`.
 
 `dry_run: true` (the default) stops after council approval: the branch and
 worktree exist locally under `<repo>/.worktrees/`, nothing is pushed. Flip it

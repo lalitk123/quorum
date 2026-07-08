@@ -13,13 +13,13 @@ push_approval: unanimous       # majority | unanimous
 worker_model: opus
 council_model: sonnet
 
-# Backlog source
+# Backlog source — defaults to autonomous goal mode: a decomposer agent turns
+# goal.md into a ticket backlog (council-reviewed) and the team builds it.
 backlog:
-  source: file                 # file | github | goal
-  file: tasks.yaml
+  source: goal                 # goal | file | github
+  goal_file: goal.md
+  file: tasks.yaml             # used when source: file
   github_repo: owner/repo      # used when source: github (open issues via `gh`)
-  goal_file: goal.md           # used when source: goal — a decomposer agent turns
-                               # the goal into tickets, council-reviewed first
 
 # When true, workers stop after council approval — no push, no PR.
 # Flip to false once you trust the pipeline.
