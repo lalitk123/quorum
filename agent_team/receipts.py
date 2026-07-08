@@ -51,6 +51,8 @@ class Receipt:
     approvals: int
     seats: int
     verdicts: list[dict] = field(default_factory=list)  # [{reviewer, approve}]
+    risk_level: str = ""
+    merge_disposition: str = ""
     pr_url: str = ""
     prev_hash: str = GENESIS_PREV
     version: int = RECEIPT_VERSION

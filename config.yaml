@@ -84,6 +84,17 @@ backlog:
   file: tasks.yaml             # used when source: file
   github_repo: owner/repo      # used when source: github (open issues via `gh`)
 
+# Graduated review strictness by risk (autonomy tiers — merge always stays human).
+# Classifies each change's blast radius and adapts the gate + merge recommendation:
+#   HIGH  (auth / secrets / crypto / DB migrations / CI-CD / infra / payment):
+#         forced to the strictest (unanimous) gate, permanent human merge.
+#   LOW   (docs, lockfiles): full council still runs, flagged safe to fast-track a
+#         HUMAN merge.
+#   MEDIUM (ordinary source): configured gate, standard human merge.
+# It can only tighten the gate, never weaken it. Auto-merge is never available.
+autonomy:
+  enabled: true
+
 # Signed audit receipts: emit an Ed25519-signed, hash-chained receipt for every
 # trust-boundary action (a dry-run approval, a push, a PR open). A third party can
 # verify the whole log offline with the public key — `python main.py --verify-receipts`

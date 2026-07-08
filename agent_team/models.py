@@ -53,3 +53,5 @@ class TicketResult:
     worktree: str | None = None
     plan_rounds: int = 0
     review_rounds: int = 0
+    risk_level: str = ""
+    disposition: str = ""      # human-facing merge recommendation (merge stays human)

@@ -120,6 +120,8 @@ def _report(results: list[TicketResult]) -> None:
         if r.branch:
             line += f"  [{r.branch}]"
         print(line)
+        if r.risk_level:
+            print(f"          risk={r.risk_level} · merge: {r.disposition}")
         if r.detail:
             print(f"          {r.detail.splitlines()[0][:120]}")
     attention = [r for r in results if r.outcome not in SUCCESS_OUTCOMES]

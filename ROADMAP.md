@@ -1,4 +1,4 @@
-# Roadmap
+# Quorum — Roadmap
 
 Grounded in 2026 multi-agent research (heterogeneous juries beat single-model
 councils; LLM judges alone catch a minority of code errors, hybrids roughly
@@ -108,9 +108,19 @@ benchmarks of its own quality.
 
 ## Next: autonomy
 
-- **Graduated autonomy tiers**: notify-only → suggest → auto-merge low-risk
-  classes (docs, lockfile bumps) after clean-track-record promotion; auth/
-  migrations/security stay human-merge forever.
+- **Graduated review strictness by risk** (`agent_team/risk.py`). A deterministic
+  classifier scores each change's blast radius from its files and added content;
+  the gate adapts without ever weakening: **HIGH** (auth / secrets / crypto / DB
+  migrations / CI-CD / infra / payment) is forced to the strictest unanimous gate
+  and flagged permanent human-merge; **LOW** (docs, lockfiles) still clears the
+  full council but is marked safe to fast-track a *human* merge; **MEDIUM** keeps
+  the configured gate. The risk level and (always human) merge disposition ride
+  in the signed receipt, the PR body, and the run summary. Because human merge is
+  permanent here, the "tiers" govern strictness and recommendation — never
+  auto-merge. Biased toward HIGH (a false HIGH only adds scrutiny). Unit-tested.
+- Promote from a clean track record: mine the receipt log so a class with a long
+  clean history can be recommended for lighter *human* ceremony — still never
+  auto-merged (auth/migrations/security stay strictest forever).
 - **Daemon mode**: long-lived service watching the backlog, maintaining the
   DAG, dispatching as dependencies clear, governed by merge throughput.
 - Bounded self-repair on escalation (auto-decompose repeatedly-failing

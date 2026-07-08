@@ -1,11 +1,18 @@
-# multi-agent-threading
+# Quorum
 
-An AI engineering team built on the **Claude Agent SDK**: parallel worker
-agents each take a ticket, and every worker must clear a **council of four
-specialist reviewer agents** twice — once to approve its plan, and again to
-approve its diff before anything is pushed to GitHub.
+**A quorum of adversarial AI reviewers must approve every change — fail-closed,
+benchmarked, and cryptographically auditable.**
+
+An AI engineering team built on the **Claude Agent SDK**: parallel worker agents
+each take a ticket, and every worker must clear a **council of five specialist
+reviewer agents** (architect, security, QA, product, and a red-team adversary)
+twice — once to approve its plan, and again to approve its diff before anything is
+pushed to GitHub. The differentiator is not the agents that write code — it is the
+trustworthy, auditable, fail-closed *review gate* they must pass.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
+
+> The git repository slug is `multi-agent-threading`; **Quorum** is the product name.
 
 ## How a ticket flows
 
@@ -129,6 +136,22 @@ python main.py --canary            # every bad gold case vs the live council, on
 Each canary is one extra council review, charged to the run budget and skipped
 (never fatal) if the budget is tight.
 
+## Graduated review strictness (risk-aware)
+
+With `autonomy.enabled: true`, a deterministic classifier scores each change's
+blast radius and adapts the gate — only ever tightening it:
+
+- **HIGH** (auth, secrets, crypto, DB migrations, CI/CD, infra, payment) is forced
+  to the strictest unanimous gate and marked **permanent human-merge**;
+- **LOW** (docs, lockfiles) still clears the full council but is flagged safe to
+  fast-track a *human* merge;
+- **MEDIUM** (ordinary source) keeps the configured gate.
+
+The risk level and merge disposition ride in the signed receipt, the PR body, and
+the run summary. Merge itself always stays human — a permanent design decision —
+so these "autonomy tiers" govern strictness and recommendation, never auto-merge.
+The classifier is biased toward HIGH: a false HIGH only adds scrutiny.
+
 ## Signed audit receipts
 
 With `audit.enabled: true`, every trust-boundary action — a dry-run approval, a
@@ -181,6 +204,7 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/reviewers.py` | Pluggable reviewer backends (Claude + OpenAI-compatible) |
 | `agent_team/checks.py` | Deterministic test/linter gate + diff tamper scan |
 | `agent_team/sandbox.py` | Clean-sandbox test verification (reproduction + teeth check) |
+| `agent_team/risk.py` | Risk classifier + graduated review strictness (human merge stays) |
 | `agent_team/bench.py` | Council quality benchmark over a labeled gold set |
 | `agent_team/canary.py` | Live known-bad canary injection (verify the verifier) |
 | `agent_team/receipts.py` | Ed25519-signed, hash-chained audit receipts + verifier |

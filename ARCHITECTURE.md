@@ -1,4 +1,6 @@
-# Multi-Agent Engineering Team — Architecture Plan
+# Quorum — Architecture Plan
+
+*(repo slug: `multi-agent-threading`; product name: **Quorum**)*
 
 ## Goal
 

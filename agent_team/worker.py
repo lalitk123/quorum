@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 from claude_agent_sdk import ClaudeAgentOptions
 
-from . import council, receipts, sandbox
+from . import council, receipts, risk, sandbox
 from .checks import run_checks, tamper_scan
 from .models import CouncilDecision, Outcome, Ticket, TicketResult
 from .runner import AgentRunError, Budget, BudgetExceeded, extract_json_block, run_agent
@@ -47,7 +47,8 @@ def _ticket_block(ticket: Ticket) -> str:
 
 
 async def _emit_receipt(cfg: dict, ticket: Ticket, ws: Workspace, commit_sha: str,
-                        decision: CouncilDecision, action: str, pr_url: str = "") -> None:
+                        decision: CouncilDecision, action: str, council_rule: str,
+                        assessment: "risk.RiskAssessment", pr_url: str = "") -> None:
     """Best-effort signed audit receipt for a trust-boundary action.
 
     Never fatal: a signing/IO failure is logged but must not fail an otherwise
@@ -64,11 +65,13 @@ async def _emit_receipt(cfg: dict, ticket: Ticket, ws: Workspace, commit_sha: st
             action=action, ticket_id=ticket.id, title=ticket.title,
             branch=ws.branch, base=ws.pr_base, commit_sha=commit_sha,
             timestamp=datetime.now(timezone.utc).isoformat(),
-            council_rule=cfg["push_approval"],
+            council_rule=council_rule,
             approvals=sum(v.approve for v in decision.verdicts),
             seats=len(decision.verdicts),
             verdicts=[{"reviewer": v.reviewer, "approve": v.approve}
                       for v in decision.verdicts],
+            risk_level=assessment.level.value,
+            merge_disposition=risk.merge_disposition(assessment.level),
             pr_url=pr_url,
         )
         receipts.emit(receipt, key,
@@ -109,6 +112,7 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
     check_commands = cfg.get("checks") or []
     verify_cfg = cfg.get("verify") or {}
     early_exit = bool(cfg.get("early_exit_voting", False))
+    autonomy_enabled = bool((cfg.get("autonomy") or {}).get("enabled", True))
 
     budget_cfg = cfg.get("budget") or {}
     ticket_budget = Budget(budget_cfg.get("per_ticket_usd"), f"ticket {ticket.id}")
@@ -272,6 +276,18 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
                                 + "\nTreat a teeth-check failure the diff does not "
                                   "convincingly justify as grounds for rejection.")
 
+                # Graduated strictness: classify the change's blast radius and
+                # push HIGH-risk changes to the strictest gate (never weaker than
+                # configured). Merge always stays human (permanent design rule).
+                assessment = (risk.classify(diff) if autonomy_enabled
+                              else risk.RiskAssessment(risk.RiskLevel.MEDIUM))
+                effective_rule = risk.effective_push_rule(
+                    assessment.level, cfg["push_approval"])
+                risk_section = risk.material_section(assessment) if autonomy_enabled else ""
+                if autonomy_enabled and effective_rule != cfg["push_approval"]:
+                    log.info("[%s] risk=%s -> pre-push gate forced to %s",
+                             ticket.id, assessment.level.value, effective_rule)
+
                 log.info("[%s] review round %d -> council", ticket.id, review_rounds)
                 decision = await council.convene(
                     material=(
@@ -279,10 +295,10 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
                         "directory contains the full changed codebase, and the "
                         "deterministic check gate (tests/linters) already passed.\n\n"
                         f"{_ticket_block(ticket)}\n\n## Approved plan\n{plan_text}"
-                        f"{tamper_section}{sandbox_section}"
+                        f"{tamper_section}{sandbox_section}{risk_section}"
                         f"\n\n## Diff\n```diff\n{diff}\n```"
                     ),
-                    cwd=str(ws.path), model=council_model, rule=cfg["push_approval"],
+                    cwd=str(ws.path), model=council_model, rule=effective_rule,
                     models=council_models, budgets=budgets, early_exit=early_exit,
                 )
                 # Verify the verifier: periodically slip a known-bad canary into
@@ -309,13 +325,17 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
                                     review_rounds=review_rounds, detail=detail)
 
             # ---- Phase 3: publish. Every action at the trust boundary — a
-            # dry-run approval or a real push/PR — gets a signed audit receipt.
+            # dry-run approval or a real push/PR — gets a signed audit receipt
+            # carrying the change's risk level and (always human) merge disposition.
             approved_sha = await ws.head_sha()
+            disposition = risk.merge_disposition(assessment.level)
             if cfg.get("dry_run", True):
-                await _emit_receipt(cfg, ticket, ws, approved_sha, decision, "approved")
+                await _emit_receipt(cfg, ticket, ws, approved_sha, decision,
+                                    "approved", effective_rule, assessment)
                 return TicketResult(ticket, Outcome.APPROVED_DRY_RUN, branch=ws.branch,
                                     worktree=str(ws.path), plan_rounds=plan_rounds,
                                     review_rounds=review_rounds,
+                                    risk_level=assessment.level.value, disposition=disposition,
                                     detail="dry_run enabled — branch ready, not pushed")
 
             approvals = "\n".join(
@@ -324,12 +344,15 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
             pr_url = await ws.push_and_open_pr(
                 title=f"{ticket.id}: {ticket.title}",
                 body=(f"{ticket.description}\n\n## Plan\n{plan_text}\n\n"
+                      f"**Risk:** {assessment.level.value} — merge: {disposition}\n\n"
                       f"## Council review\n{approvals}"),
             )
-            await _emit_receipt(cfg, ticket, ws, approved_sha, decision, "pr_opened", pr_url)
+            await _emit_receipt(cfg, ticket, ws, approved_sha, decision,
+                                "pr_opened", effective_rule, assessment, pr_url)
             await ws.remove(keep_branch=True)
             return TicketResult(ticket, Outcome.PR_OPENED, branch=ws.branch,
                                 plan_rounds=plan_rounds, review_rounds=review_rounds,
+                                risk_level=assessment.level.value, disposition=disposition,
                                 detail=pr_url)
         finally:
             await locks.release(ticket.id)
