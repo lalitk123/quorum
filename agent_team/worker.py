@@ -75,6 +75,7 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
     council_models = cfg.get("council_models") or {}
     check_commands = cfg.get("checks") or []
     verify_cfg = cfg.get("verify") or {}
+    early_exit = bool(cfg.get("early_exit_voting", False))
 
     budget_cfg = cfg.get("budget") or {}
     ticket_budget = Budget(budget_cfg.get("per_ticket_usd"), f"ticket {ticket.id}")
@@ -126,7 +127,7 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
                     f"{_ticket_block(ticket)}\n\n## Proposed plan\n{plan_text}"
                 ),
                 cwd=str(ws.path), model=council_model, rule=cfg["plan_approval"],
-                models=council_models, budgets=budgets,
+                models=council_models, budgets=budgets, early_exit=early_exit,
             )
             if decision.approved:
                 break
@@ -249,7 +250,7 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
                         f"\n\n## Diff\n```diff\n{diff}\n```"
                     ),
                     cwd=str(ws.path), model=council_model, rule=cfg["push_approval"],
-                    models=council_models, budgets=budgets,
+                    models=council_models, budgets=budgets, early_exit=early_exit,
                 )
                 # Verify the verifier: periodically slip a known-bad canary into
                 # the live stream and alert if the council waves it through.

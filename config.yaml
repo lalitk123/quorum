@@ -9,6 +9,13 @@ max_review_rounds: 3          # council rejections tolerated per checkpoint befo
 plan_approval: majority        # majority | unanimous
 push_approval: unanimous       # majority | unanimous
 
+# Early-exit voting (worker gates only): cancel reviewer sessions still in flight
+# the moment the outcome is forced — a single reject on a unanimous gate, or a
+# reached majority on the plan gate. The decision is identical to a full run; it
+# only saves the tokens of votes that couldn't change it, at the cost of fewer
+# collected objections per round (so a rejected round may fix less per revision).
+early_exit_voting: false
+
 # Models (Agent SDK aliases or full model IDs)
 worker_model: opus
 council_model: sonnet

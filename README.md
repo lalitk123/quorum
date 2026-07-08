@@ -35,6 +35,9 @@ adversary — runs as five **parallel, independent, read-only agent sessions**;
 each cites file:line evidence, runs a self-falsification pass, and returns a
 JSON verdict aggregated in plain code. Unparseable reviews, errored reviews,
 and approvals with no cited evidence all count as rejections (fail closed).
+With `early_exit_voting` on, in-flight seats are cancelled once the outcome is
+mathematically forced (a reject on the unanimous gate, a reached majority on the
+plan gate) — a lossless token saving that never changes the decision.
 
 Seats can run on **different model families** for a heterogeneous jury (the
 highest-leverage reliability lever): each seat is a bare Claude model or an

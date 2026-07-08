@@ -7,8 +7,11 @@ the decomposer's dependency validation. Run with: pytest -q
 
 import pytest
 
+import asyncio
+
 from agent_team.checks import classify_changed_files, tamper_scan
-from agent_team.council import _review_one
+from agent_team import council
+from agent_team.council import _outcome_decided, _review_one
 from agent_team.decomposer import _parse_tickets
 from agent_team.models import CouncilDecision, Verdict
 from agent_team.reviewers import SeatSpec, _seat_cost, resolve_seat
@@ -216,3 +219,54 @@ def test_parse_tickets_accepts_valid_dag():
     assert not isinstance(tickets, str)
     assert [t.id for t in tickets] == ["A", "B"]
     assert tickets[1].depends_on == ["A"]
+
+
+# ---- Early-exit voting (lossless) -------------------------------------------
+
+def test_outcome_decided_unanimous_short_circuits_on_reject():
+    # one reject with seats still pending already forces a reject.
+    assert _outcome_decided(approvals=2, rejections=1, pending=2, total=5,
+                            rule="unanimous") is False
+    # all-approve only resolves once nothing is pending.
+    assert _outcome_decided(4, 0, 1, 5, "unanimous") is None
+    assert _outcome_decided(5, 0, 0, 5, "unanimous") is True
+
+
+def test_outcome_decided_majority_resolves_both_ways_early():
+    # 3/5 approvals is a strict majority regardless of the last two votes.
+    assert _outcome_decided(3, 0, 2, 5, "majority") is True
+    # 3 rejections make a 5-seat majority unreachable (max 2 approvals left).
+    assert _outcome_decided(0, 3, 2, 5, "majority") is False
+    # 2 approvals, 1 reject, 2 pending: still open.
+    assert _outcome_decided(2, 1, 2, 5, "majority") is None
+
+
+def test_outcome_decided_rejects_unknown_rule():
+    with pytest.raises(ValueError):
+        _outcome_decided(1, 0, 0, 1, "vibes")
+
+
+@pytest.mark.asyncio
+async def test_convene_early_exit_cancels_pending_seats(monkeypatch):
+    """A fast reject on a unanimous gate must cancel the slow seats' sessions."""
+    completed = []
+
+    async def fake_review_one(name, persona, material, cwd, spec, budgets):
+        # 'security' rejects immediately; everyone else is slow.
+        if name == "security":
+            completed.append(name)
+            return Verdict(name, approve=False, reasoning="sqli", evidence=["a:1"])
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            raise
+        completed.append(name)
+        return Verdict(name, approve=True, reasoning="ok", evidence=["a:1"])
+
+    monkeypatch.setattr(council, "_review_one", fake_review_one)
+    decision = await council.convene("m", "/tmp", "sonnet", "unanimous",
+                                     early_exit=True)
+    assert decision.approved is False
+    # the slow seats were cancelled, not awaited to completion.
+    assert completed == ["security"]
+    assert [v.reviewer for v in decision.verdicts] == ["security"]

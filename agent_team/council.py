@@ -109,26 +109,77 @@ async def _review_one(
     )
 
 
+def _outcome_decided(approvals: int, rejections: int, pending: int,
+                     total: int, rule: str) -> bool | None:
+    """Is the gate's verdict already forced by the votes counted so far?
+
+    Returns the decided outcome (True/False) when the remaining `pending` seats
+    cannot change it, else None. This is *lossless*: it only reports a decision
+    the full panel would reach anyway — early exit skips votes that can't matter,
+    it never overrides one. When pending == 0 it always resolves.
+    """
+    if rule == "unanimous":
+        if rejections > 0:
+            return False                      # one reject already fails unanimity
+        if pending == 0:
+            return approvals == total
+        return None
+    if rule == "majority":
+        need = total // 2 + 1                  # strict majority (> total/2)
+        if approvals >= need:
+            return True
+        if approvals + pending < need:
+            return False                       # majority now unreachable
+        return None
+    raise ValueError(f"unknown approval rule: {rule}")
+
+
 async def convene(material: str, cwd: str, model: str, rule: str,
                   models: dict[str, object] | None = None,
-                  budgets: tuple[Budget, ...] = ()) -> CouncilDecision:
+                  budgets: tuple[Budget, ...] = (),
+                  early_exit: bool = False) -> CouncilDecision:
     """Run all reviewers in parallel and aggregate under the given rule.
 
     `models` optionally routes individual seats to different backends/models
     for a heterogeneous jury: a bare Claude model string, or a full backend
     spec (e.g. an OpenAI-compatible model). See `reviewers.resolve_seat`.
+
+    With `early_exit`, reviewer sessions still in flight are cancelled the moment
+    the outcome is forced (a reject on a unanimous gate, a reached majority) —
+    saving their tokens. The decision is identical to the full run; only the set
+    of collected verdicts (and thus the feedback detail) may be smaller.
     """
     seat_config = models or {}
-    verdicts = await asyncio.gather(*(
+    coros = [
         _review_one(name, persona, material, cwd,
                     resolve_seat(seat_config.get(name), model), budgets)
         for name, persona in REVIEWERS.items()
-    ))
-    approvals = sum(v.approve for v in verdicts)
-    if rule == "unanimous":
-        approved = approvals == len(verdicts)
-    elif rule == "majority":
-        approved = approvals > len(verdicts) / 2
-    else:
-        raise ValueError(f"unknown approval rule: {rule}")
-    return CouncilDecision(approved=approved, verdicts=list(verdicts))
+    ]
+    total = len(coros)
+
+    if not early_exit:
+        verdicts = list(await asyncio.gather(*coros))
+        approvals = sum(v.approve for v in verdicts)
+        decided = _outcome_decided(approvals, total - approvals, 0, total, rule)
+        return CouncilDecision(approved=bool(decided), verdicts=verdicts)
+
+    tasks = [asyncio.create_task(c) for c in coros]
+    verdicts, approvals, rejections = [], 0, 0
+    approved: bool | None = None
+    try:
+        for fut in asyncio.as_completed(tasks):
+            v = await fut
+            verdicts.append(v)
+            approvals += v.approve
+            rejections += not v.approve
+            pending = total - len(verdicts)
+            approved = _outcome_decided(approvals, rejections, pending, total, rule)
+            if approved is not None:
+                break
+    finally:
+        pending_tasks = [t for t in tasks if not t.done()]
+        for t in pending_tasks:
+            t.cancel()
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+    return CouncilDecision(approved=bool(approved), verdicts=verdicts)

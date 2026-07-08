@@ -80,8 +80,15 @@ benchmarks of its own quality.
 
 ## Next: scale
 
-- Early-exit voting (stop at majority for plan gate; first hard reject for
-  unanimous gate) once calibration shows the consensus score discriminates.
+- **Early-exit voting** (`early_exit_voting`, worker gates only). Reviewer
+  sessions still in flight are cancelled the instant the outcome is forced — a
+  single reject on the unanimous pre-push gate, or a reached majority on the plan
+  gate — saving their tokens. Implemented *losslessly*: `_outcome_decided` only
+  short-circuits a verdict the full panel would reach anyway, so it needs no
+  calibration; the trade is fewer collected objections per rejected round.
+  Deterministic and unit-tested (decision table + a cancellation test). A more
+  aggressive, calibration-gated variant (exit on a *predicted* outcome before it
+  is mathematically forced) remains future work.
 - Structured context objects between phases instead of full plan/diff text
   where possible; targeted retrieval for reviewers on large repos.
 - Persist decomposer plan + per-ticket state to external memory for very
