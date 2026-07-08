@@ -67,7 +67,8 @@ def _write_escalation(ws: Workspace, ticket: Ticket, reason: str,
 
 async def run_ticket(ticket: Ticket, cfg: dict, locks,
                      dep_branches: list[str] | None = None,
-                     run_budget: Budget | None = None) -> TicketResult:
+                     run_budget: Budget | None = None,
+                     canary=None) -> TicketResult:
     max_rounds = int(cfg["max_review_rounds"])
     worker_model = cfg["worker_model"]
     council_model = cfg["council_model"]
@@ -250,6 +251,12 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
                     cwd=str(ws.path), model=council_model, rule=cfg["push_approval"],
                     models=council_models, budgets=budgets,
                 )
+                # Verify the verifier: periodically slip a known-bad canary into
+                # the live stream and alert if the council waves it through.
+                # Charged to the run budget only — it is not this ticket's work.
+                if canary is not None:
+                    await canary.run_if_due(
+                        cfg, budgets=tuple(b for b in (run_budget,) if b))
                 if decision.approved:
                     break
                 impl_prompt = (

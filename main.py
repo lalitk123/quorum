@@ -6,6 +6,7 @@ import sys
 import yaml
 
 from agent_team.bench import run_bench
+from agent_team.canary import run_canary_sweep
 from agent_team.decomposer import DecompositionRejected
 from agent_team.orchestrator import run
 from agent_team.runner import BudgetExceeded
@@ -22,6 +23,11 @@ def main() -> None:
         help="Benchmark the council against a labeled gold set instead of "
              "running the build loop (default dir: bench/gold).",
     )
+    parser.add_argument(
+        "--canary", nargs="?", const="bench/gold", default=None, metavar="GOLD_DIR",
+        help="Run every bad gold case against the LIVE council once and alert on "
+             "any that are approved or under-dissented (verify the verifier).",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -35,6 +41,10 @@ def main() -> None:
 
     if args.bench is not None:
         asyncio.run(run_bench(cfg, args.bench))
+        return
+
+    if args.canary is not None:
+        asyncio.run(run_canary_sweep(cfg, args.canary))
         return
 
     try:

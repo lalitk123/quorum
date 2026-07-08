@@ -104,6 +104,22 @@ cost per review. Add your own cases as `bench/gold/<name>/` directories
 (`case.yaml` with a `label:`, a `diff.patch`, and an optional `workspace/`
 tree). This is real API spend, bounded by `budget.per_ticket_usd` per case.
 
+## Verify the verifier (canary diffs)
+
+A benchmark measures the gate once; a live gate can still drift into a rubber
+stamp. With `canary.enabled: true`, the orchestrator periodically slips a
+known-bad gold case into the **live** review stream and alerts if the council
+approves it (a seeded defect that would have shipped) or if too few seats
+dissented (the leading indicator of drift). Run it on demand against the current
+live configuration:
+
+```bash
+python main.py --canary            # every bad gold case vs the live council, once
+```
+
+Each canary is one extra council review, charged to the run budget and skipped
+(never fatal) if the budget is tight.
+
 `dry_run: true` (the default) stops after council approval: the branch and
 worktree exist locally under `<repo>/.worktrees/`, nothing is pushed. Flip it
 to `false` to let approved workers push and open PRs.
@@ -138,6 +154,7 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/checks.py` | Deterministic test/linter gate + diff tamper scan |
 | `agent_team/sandbox.py` | Clean-sandbox test verification (reproduction + teeth check) |
 | `agent_team/bench.py` | Council quality benchmark over a labeled gold set |
+| `agent_team/canary.py` | Live known-bad canary injection (verify the verifier) |
 | `agent_team/workspace.py` | Git worktrees, commits, diffs, push/PR (deterministic code) |
 | `agent_team/backlog.py` | tasks.yaml or GitHub Issues backlog |
 | `agent_team/runner.py` | Thin `query()` wrapper + JSON extraction |

@@ -58,6 +58,17 @@ budget:
   per_ticket_usd: 10
   per_run_usd: 100
 
+# Canary diffs — verify the verifier. Periodically slip a known-bad gold case
+# into the LIVE review stream and alert if the council approves it (a seeded
+# defect that would have shipped) or if too few seats dissented (drift warning).
+# Catches sycophancy / model drift that a one-time benchmark can't. Each canary
+# is one extra council review, charged to the run budget.
+canary:
+  enabled: false
+  gold_dir: bench/gold         # bad cases (label: reject) are reused as canaries
+  sample_every: 5              # inject one canary per N real diff reviews
+  min_dissent: 2               # fewer seats rejecting a known defect => warning
+
 # Backlog source — defaults to autonomous goal mode: a decomposer agent turns
 # goal.md into a ticket backlog (council-reviewed) and the team builds it.
 backlog:

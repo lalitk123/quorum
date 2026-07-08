@@ -45,6 +45,14 @@ benchmarks of its own quality.
   confusion matrix (defect recall, false-reject rate), per-seat detection
   rates, and cost per review. Ships with example good/bad cases (clean change,
   SQL injection, gamed test). The reproducible, publishable trust artifact.
+- **Canary diffs — verify the verifier** (`agent_team/canary.py`,
+  `python main.py --canary`). Periodically injects a known-bad gold case into
+  the *live* review stream and alerts when the gate approves a seeded defect
+  (CRITICAL — the blind spot that ships real ones) or when dissent collapses
+  below a healthy floor (the leading drift indicator), recording which seats
+  were fooled for re-routing. Catches runtime sycophancy/model drift a one-time
+  benchmark cannot. Charged to the run budget, never fatal to a real ticket;
+  cadence and alert logic are deterministic and unit-tested.
 - Goal → council-approved DAG decomposition; dependency-aware scheduling;
   stacked PRs; file-overlap locks; human-only merge.
 
@@ -54,9 +62,10 @@ benchmarks of its own quality.
   toward 30–200 labeled diffs from the real distribution, add swap-consistency
   and κ-vs-human measures, and use the per-seat numbers to weight/re-route
   seats and set aggregation thresholds empirically rather than by intuition.
-- **Canary diffs.** Periodically inject known-bad diffs into the *live* review
-  stream; alert when a seat approves one or its dissent rate collapses
-  (sycophancy detection — "verify the verifier"). Reuses the bad gold cases.
+- **Baseline-relative canary alerting.** Canaries alert today on absolute
+  thresholds (gate approval, dissent floor). Record a per-seat baseline from the
+  gold sweep so a canary can flag a *seat-specific* dissent collapse (a seat that
+  used to catch this case and now doesn't), not just a panel-wide one.
 - **Deeper mutation coverage.** The teeth check ships today as a single
   source-revert; extend toward per-file mutation and coverage deltas so a
   partially-tested change is scored, not just pass/fail.

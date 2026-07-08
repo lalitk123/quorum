@@ -6,6 +6,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+from . import canary as canary_mod
 from .backlog import load_backlog
 from .decomposer import decompose
 from .models import Outcome, Ticket, TicketResult
@@ -66,6 +67,10 @@ async def run(cfg: dict) -> list[TicketResult]:
     tickets = await _load_tickets(cfg, run_budget)
     log.info("backlog ready: %d ticket(s)", len(tickets))
 
+    canary = canary_mod.build_monitor(cfg)
+    if canary:
+        log.info("canary monitor armed: %d bad case(s), 1 every %d review(s)",
+                 len(canary.cases), canary.sample_every)
     locks = FileLocks()
     semaphore = asyncio.Semaphore(int(cfg["max_concurrent_workers"]))
     tasks: dict[str, asyncio.Task] = {}
@@ -88,7 +93,7 @@ async def run(cfg: dict) -> list[TicketResult]:
             log.info("[%s] worker started: %s", ticket.id, ticket.title)
             try:
                 result = await run_ticket(ticket, cfg, locks, dep_branches,
-                                          run_budget=run_budget)
+                                          run_budget=run_budget, canary=canary)
             except Exception as exc:  # a crashed worker must not sink the run
                 log.exception("[%s] worker crashed", ticket.id)
                 result = TicketResult(ticket, Outcome.FAILED, detail=str(exc))
@@ -103,6 +108,8 @@ async def run(cfg: dict) -> list[TicketResult]:
     log.info("run spend: $%.2f%s", run_budget.spent,
              f" of ${run_budget.limit:.2f} cap" if run_budget.limit else "")
     _report(results)
+    if canary and canary.results:
+        print(canary_mod.format_summary(canary.results))
     return results
 
 
