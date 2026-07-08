@@ -91,6 +91,13 @@ drift:
   degraded_miss_rate: 0.5      # p1: the degraded miss rate to catch quickly
   threshold: 4.0               # CUSUM alarm threshold (higher = fewer false alarms)
 
+# Adaptive reviewer selection (RQ2): from measured reliability, recommend the
+# minimum-cost council reaching target_detection. `python main.py --select`.
+selection:
+  target_detection: 0.95       # required P(the team catches a real defect)
+  seat_costs: {}               # optional per-seat USD cost; uniform if omitted
+  budget:                      # optional hard cost cap (null = none)
+
 # Backlog source — defaults to autonomous goal mode: a decomposer agent turns
 # goal.md into a ticket backlog (council-reviewed) and the team builds it.
 backlog:

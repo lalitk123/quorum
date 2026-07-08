@@ -20,8 +20,9 @@ research questions organize the work:
   instead of majority voting. *(Substrate shipped: `reliability.py`,
   `judgments.py` — see Done.)*
 - **RQ2 — Can we adaptively pick reviewers to maximize defect recall per dollar?**
-  Condition the reliability estimates on the change (bug type, language, risk
-  class) and select the seats that buy the most detection per dollar.
+  *(Shipped: `selection.py` — greedy min-cost council reaching a target detection
+  under the independence model `P = 1 - Π(1 - sensitivityᵢ)`, condition-sliceable
+  by risk/language/bug-type. See Done.)*
 - **RQ3 — Can we detect reviewer degradation automatically?** *(Shipped:
   `drift.py` — canary outcomes persist as a per-seat time series; a Bernoulli
   CUSUM raises a self-alarm, with the drift onset index, when a seat starts
@@ -168,6 +169,15 @@ methodology + infrastructure, with results that sharpen as the log grows.
   in the signed receipt, the PR body, and the run summary. Because human merge is
   permanent here, the "tiers" govern strictness and recommendation — never
   auto-merge. Biased toward HIGH (a false HIGH only adds scrutiny). Unit-tested.
+- **Adaptive reviewer selection** (RQ2: `agent_team/selection.py`,
+  `python main.py --select`). From the measured reliability model, greedily builds
+  the minimum-cost council that reaches a target defect-detection probability,
+  under the independence model `P(detect) = 1 - Π(1 - sensitivityᵢ)`, adding the
+  seat with the best marginal detection-per-dollar each step. Condition-sliceable
+  (`for_condition`) so a security-heavy diff pulls the seats that have measurably
+  caught security defects. The greedy trail is an auditable record of each choice.
+  Unit-tested, including the cost-aware case where two cheap-but-good seats beat
+  one expensive star.
 - Promote from a clean track record: mine the receipt log so a class with a long
   clean history can be recommended for lighter *human* ceremony — still never
   auto-merged (auth/migrations/security stay strictest forever).

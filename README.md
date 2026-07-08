@@ -273,6 +273,7 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/judgments.py` | Persistent labeled reviewer-judgment log (the dataset) |
 | `agent_team/drift.py` | Continuous reviewer-drift detection via CUSUM (RQ3) |
 | `agent_team/mutation.py` | Mutation-based review evaluation + free labeled-data engine (#7) |
+| `agent_team/selection.py` | Adaptive min-cost reviewer selection per dollar (RQ2) |
 | `agent_team/receipts.py` | Ed25519-signed, hash-chained audit receipts + verifier |
 | `agent_team/workspace.py` | Git worktrees, commits, diffs, push/PR (deterministic code) |
 | `agent_team/backlog.py` | tasks.yaml or GitHub Issues backlog |

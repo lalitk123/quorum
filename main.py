@@ -54,6 +54,11 @@ def main() -> None:
         "--limit", type=int, default=None,
         help="Cap the number of mutants evaluated (with --mutants).",
     )
+    parser.add_argument(
+        "--select", nargs="?", const="", default=None, metavar="JUDGMENT_LOG",
+        help="Recommend a minimum-cost council reaching the target detection from "
+             "measured reliability (RQ2). Defaults to reliability.log_file.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -94,6 +99,19 @@ def main() -> None:
     if args.mutants is not None:
         from agent_team.mutation import run_mutation_eval
         asyncio.run(run_mutation_eval(cfg, args.mutants, limit=args.limit))
+        return
+
+    if args.select is not None:
+        from agent_team import judgments, reliability, selection
+        sel_cfg = cfg.get("selection") or {}
+        path = args.select or (cfg.get("reliability") or {}).get(
+            "log_file", ".agent_team/judgments.jsonl")
+        model = reliability.estimate_reliability(judgments.load_judgments(path))
+        sel = selection.select_reviewers(
+            model, costs=sel_cfg.get("seat_costs") or {},
+            target_detection=float(sel_cfg.get("target_detection", 0.95)),
+            budget=sel_cfg.get("budget"))
+        print(selection.format_selection(sel, model))
         return
 
     if args.drift is not None:
