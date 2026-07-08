@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent_team.bench import CaseResult, compute_metrics, load_gold
+from agent_team.bench import CaseResult, cohen_kappa, compute_metrics, load_gold
 from agent_team.models import Verdict
 
 
@@ -58,6 +58,52 @@ def test_empty_classes_give_none_not_zerodiv():
     m = compute_metrics([_case("good1", True, True)])   # no bad cases
     assert m["gate"]["defect_recall"] is None
     assert m["gate"]["false_reject_rate"] == 0.0
+
+
+# ---- Cohen's kappa -----------------------------------------------------------
+
+def test_kappa_perfect_agreement_is_one():
+    pairs = [(True, True), (False, False), (True, True), (False, False)]
+    assert cohen_kappa(pairs) == pytest.approx(1.0)
+
+
+def test_kappa_chance_agreement_is_zero():
+    # A and B each say True half the time, independently -> κ ≈ 0.
+    pairs = [(True, True), (True, False), (False, True), (False, False)]
+    assert cohen_kappa(pairs) == pytest.approx(0.0)
+
+
+def test_kappa_undefined_only_when_both_raters_constant_same_class():
+    # both raters always approve -> chance agreement is already total -> undefined.
+    assert cohen_kappa([(True, True), (True, True)]) is None
+    assert cohen_kappa([]) is None
+    # only one rater constant -> still defined (here, no better than chance).
+    assert cohen_kappa([(True, True), (False, True)]) == pytest.approx(0.0)
+
+
+def test_gate_and_seat_kappa_vs_human():
+    # gate perfectly matches labels; one seat perfectly matches, one is inverted.
+    results = [
+        _case("g", True, True, verdicts=[Verdict("s_good", True, "x"),
+                                         Verdict("s_bad", False, "x")]),
+        _case("b", False, False, verdicts=[Verdict("s_good", False, "x"),
+                                           Verdict("s_bad", True, "x")]),
+    ]
+    m = compute_metrics(results)
+    assert m["gate"]["kappa_vs_human"] == pytest.approx(1.0)
+    assert m["seats"]["s_good"]["kappa_vs_human"] == pytest.approx(1.0)
+    assert m["seats"]["s_bad"]["kappa_vs_human"] == pytest.approx(-1.0)
+
+
+def test_inter_seat_kappa_flags_correlated_seats():
+    # two seats that always vote identically -> mean pairwise κ = 1.0.
+    results = [
+        _case("g", True, True, verdicts=[Verdict("a", True, "x"), Verdict("b", True, "x")]),
+        _case("b", False, False, verdicts=[Verdict("a", False, "x"), Verdict("b", False, "x")]),
+    ]
+    m = compute_metrics(results)
+    assert m["inter_seat"]["mean_pairwise_kappa"] == pytest.approx(1.0)
+    assert m["inter_seat"]["pairwise_kappa"]["a~b"] == pytest.approx(1.0)
 
 
 def test_load_gold_reads_shipped_examples():

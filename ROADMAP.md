@@ -58,10 +58,18 @@ benchmarks of its own quality.
 
 ## Next: reliability
 
-- **Grow the gold set + tune from it.** The harness exists; now grow the corpus
-  toward 30–200 labeled diffs from the real distribution, add swap-consistency
-  and κ-vs-human measures, and use the per-seat numbers to weight/re-route
-  seats and set aggregation thresholds empirically rather than by intuition.
+- **Chance-corrected quality measures** (`bench.py`). The benchmark now reports
+  Cohen's **κ vs the human gold label** (per seat and for the whole gate — so a
+  mostly-approve gate on a mostly-good corpus can't fake a high score the way raw
+  accuracy would) and **inter-seat κ** (mean pairwise agreement — the direct
+  health check on the heterogeneous jury: low κ = decorrelated seats = the design
+  is working; high κ = redundant seats). Deterministic, unit-tested. These are
+  the numbers to tune seat routing and aggregation thresholds against.
+- **Grow the gold set + tune from it.** The measurement harness exists; now grow
+  the corpus toward 30–200 labeled diffs from the real distribution, add
+  repeat-run stability (verdict flip-rate under resampling), and use the per-seat
+  κ / detection numbers to weight or re-route seats and set aggregation
+  thresholds empirically rather than by intuition.
 - **Baseline-relative canary alerting.** Canaries alert today on absolute
   thresholds (gate approval, dissent floor). Record a per-seat baseline from the
   gold sweep so a canary can flag a *seat-specific* dissent collapse (a seat that

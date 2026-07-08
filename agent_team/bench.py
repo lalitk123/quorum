@@ -20,6 +20,7 @@ Gold case layout (one directory per case under the gold root):
 """
 
 import asyncio
+import itertools
 import logging
 import shutil
 import tempfile
@@ -126,6 +127,50 @@ async def _run_case(case: GoldCase, cfg: dict, budget_cap: float | None) -> Case
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def cohen_kappa(pairs: list[tuple[bool, bool]]) -> float | None:
+    """Cohen's κ for two binary raters over the same items.
+
+    κ corrects raw agreement for the agreement expected by chance, so it does not
+    flatter a gate that just says "approve" on a mostly-good corpus (the way plain
+    accuracy would). Returns None when it is undefined: no items, or one rater is
+    constant so chance agreement is already total.
+    """
+    n = len(pairs)
+    if n == 0:
+        return None
+    agree = sum(a == b for a, b in pairs)
+    p_o = agree / n
+    pa = sum(a for a, _ in pairs) / n          # rater A's rate of "True"
+    pb = sum(b for _, b in pairs) / n          # rater B's rate of "True"
+    p_e = pa * pb + (1 - pa) * (1 - pb)         # chance agreement
+    if p_e >= 1.0:
+        return None
+    return (p_o - p_e) / (1 - p_e)
+
+
+def _inter_seat_agreement(results: list["CaseResult"]) -> dict:
+    """How correlated the seats are — the health check on the heterogeneous jury.
+
+    The whole design bets that routing seats to different model families
+    decorrelates their errors. If seats agree far more than chance (high κ), the
+    jury is redundant and the extra seats buy little; genuinely diverse seats
+    should show *low* pairwise κ. Reported as mean pairwise Cohen κ over the cases
+    where both seats voted.
+    """
+    per_case: list[dict[str, bool]] = [
+        {v.reviewer: v.approve for v in r.verdicts} for r in results if r.verdicts
+    ]
+    seats = sorted({s for case in per_case for s in case})
+    pair_kappas: dict[str, float] = {}
+    for a, b in itertools.combinations(seats, 2):
+        pairs = [(case[a], case[b]) for case in per_case if a in case and b in case]
+        k = cohen_kappa(pairs)
+        if k is not None:
+            pair_kappas[f"{a}~{b}"] = k
+    mean = sum(pair_kappas.values()) / len(pair_kappas) if pair_kappas else None
+    return {"mean_pairwise_kappa": mean, "pairwise_kappa": pair_kappas}
+
+
 def compute_metrics(results: list[CaseResult]) -> dict:
     """Confusion matrix for the gate plus per-seat detection rates.
 
@@ -157,6 +202,14 @@ def compute_metrics(results: list[CaseResult]) -> dict:
         s["defect_recall"] = s["true_reject"] / bad if bad else None
         s["false_reject_rate"] = s["false_reject"] / good if good else None
 
+    # κ vs the human gold label — per seat and for the whole gate. Positive-class
+    # neutral: we agree/disagree on the raw approve|reject call vs the label.
+    for name, s in seats.items():
+        seat_pairs = [(r.expected_approve, v.approve)
+                      for r in scored for v in r.verdicts if v.reviewer == name]
+        s["kappa_vs_human"] = cohen_kappa(seat_pairs)
+    gate_kappa = cohen_kappa([(r.expected_approve, r.decision_approved) for r in scored])
+
     costs = [r.cost_usd for r in results]
     return {
         "n": len(results), "n_scored": len(scored),
@@ -167,8 +220,10 @@ def compute_metrics(results: list[CaseResult]) -> dict:
             "true_reject": true_reject, "false_approve": false_approve,
             "defect_recall": true_reject / n_bad if n_bad else None,
             "false_reject_rate": false_reject / n_good if n_good else None,
+            "kappa_vs_human": gate_kappa,
         },
         "seats": seats,
+        "inter_seat": _inter_seat_agreement(scored),
         "cost_usd_total": sum(costs),
         "cost_usd_mean": sum(costs) / len(costs) if costs else 0.0,
     }
@@ -187,23 +242,39 @@ def format_report(metrics: dict, results: list[CaseResult]) -> str:
     def pct(x):
         return "n/a" if x is None else f"{x * 100:.0f}%"
 
+    def kap(x):
+        return "n/a" if x is None else f"{x:+.2f}"
+
     lines += [
         "",
         f"cases: {metrics['n_scored']} scored"
         f" ({metrics['n_good']} good, {metrics['n_bad']} bad)"
         + (f", {metrics['n_errored']} errored" if metrics["n_errored"] else ""),
         f"gate: defect_recall={pct(g['defect_recall'])}"
-        f"  false_reject_rate={pct(g['false_reject_rate'])}",
+        f"  false_reject_rate={pct(g['false_reject_rate'])}"
+        f"  kappa_vs_human={kap(g['kappa_vs_human'])}",
         f"  true_approve={g['true_approve']} false_reject={g['false_reject']}"
         f"  true_reject={g['true_reject']} false_approve={g['false_approve']}"
         f"  <- false_approve is a defect shipped",
         f"cost: ${metrics['cost_usd_total']:.2f} total,"
         f" ${metrics['cost_usd_mean']:.3f}/case",
         "",
-        "per-seat (defect_recall / false_reject_rate):",
+        "per-seat (defect_recall / false_reject_rate / kappa_vs_human):",
     ]
     for name, s in sorted(metrics["seats"].items()):
-        lines.append(f"  {name:<12} {pct(s['defect_recall'])} / {pct(s['false_reject_rate'])}")
+        lines.append(f"  {name:<12} {pct(s['defect_recall'])} / "
+                     f"{pct(s['false_reject_rate'])} / {kap(s.get('kappa_vs_human'))}")
+
+    inter = metrics.get("inter_seat") or {}
+    mean_k = inter.get("mean_pairwise_kappa")
+    lines += [
+        "",
+        f"jury correlation: mean pairwise κ={kap(mean_k)}"
+        "  (lower = more decorrelated seats = healthier heterogeneous jury)",
+    ]
+    for pair, k in sorted((inter.get("pairwise_kappa") or {}).items(),
+                          key=lambda kv: kv[1], reverse=True):
+        lines.append(f"  {pair:<24} {kap(k)}")
     return "\n".join(lines)
 
 

@@ -100,9 +100,15 @@ python main.py --bench            # uses bench/gold/ (ships with example cases)
 It prints a confusion matrix — **defect recall** (fraction of bad diffs
 caught; a false-approve is a defect shipped) and **false-reject rate**
 (fraction of good diffs wrongly blocked) — plus per-seat detection rates and
-cost per review. Add your own cases as `bench/gold/<name>/` directories
-(`case.yaml` with a `label:`, a `diff.patch`, and an optional `workspace/`
-tree). This is real API spend, bounded by `budget.per_ticket_usd` per case.
+cost per review. Two chance-corrected agreement measures round out the picture:
+**κ vs human** (Cohen's kappa of the gate/each seat against the gold labels, so
+a mostly-approve gate on a mostly-good corpus can't fake a high score), and
+**jury correlation** (mean pairwise κ between seats — the direct health check
+on the heterogeneous jury: genuinely decorrelated seats show *low* κ; high κ
+means the extra seats are redundant). Add your own cases as `bench/gold/<name>/`
+directories (`case.yaml` with a `label:`, a `diff.patch`, and an optional
+`workspace/` tree). This is real API spend, bounded by `budget.per_ticket_usd`
+per case.
 
 ## Verify the verifier (canary diffs)
 
