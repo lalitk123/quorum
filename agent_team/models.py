@@ -1,0 +1,50 @@
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+@dataclass
+class Ticket:
+    id: str
+    title: str
+    description: str
+    depends_on: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Verdict:
+    reviewer: str
+    approve: bool
+    reasoning: str
+
+
+@dataclass
+class CouncilDecision:
+    approved: bool
+    verdicts: list[Verdict]
+
+    def feedback(self) -> str:
+        """Consolidated objections from rejecting reviewers, fed back to the worker."""
+        lines = [
+            f"[{v.reviewer}] {v.reasoning}" for v in self.verdicts if not v.approve
+        ]
+        return "\n".join(lines)
+
+
+class Outcome(str, Enum):
+    PR_OPENED = "pr_opened"
+    APPROVED_DRY_RUN = "approved_dry_run"
+    ESCALATED_PLAN = "escalated_plan"        # council never approved the plan
+    ESCALATED_REVIEW = "escalated_review"    # council never approved the diff
+    BLOCKED = "blocked"                      # dependency failed or couldn't be integrated
+    FAILED = "failed"                        # agent error / no changes produced
+
+
+@dataclass
+class TicketResult:
+    ticket: Ticket
+    outcome: Outcome
+    detail: str = ""
+    branch: str | None = None
+    worktree: str | None = None
+    plan_rounds: int = 0
+    review_rounds: int = 0

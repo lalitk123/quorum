@@ -1,0 +1,15 @@
+# Example backlog for `backlog.source: file`.
+tasks:
+  - id: T1
+    title: Add input validation to the signup endpoint
+    description: >
+      The /signup endpoint accepts arbitrary payloads. Add validation for
+      email format and password length, returning 400 with a clear error
+      body on failure. Cover both cases with tests.
+
+  - id: T2
+    title: Fix off-by-one in pagination
+    description: >
+      The list endpoints return the first item of the next page as the last
+      item of the current page. Find the root cause and fix it, with a
+      regression test.

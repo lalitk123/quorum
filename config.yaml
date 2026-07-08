@@ -1,0 +1,26 @@
+# Path to the git repository the agent team works on.
+# Can be any local clone with an `origin` remote (needed for push/PR).
+repo_path: /path/to/target/repo
+base_branch: main
+
+# Parallelism and review policy
+max_concurrent_workers: 3
+max_review_rounds: 3          # council rejections tolerated per checkpoint before escalating
+plan_approval: majority        # majority | unanimous
+push_approval: unanimous       # majority | unanimous
+
+# Models (Agent SDK aliases or full model IDs)
+worker_model: opus
+council_model: sonnet
+
+# Backlog source
+backlog:
+  source: file                 # file | github | goal
+  file: tasks.yaml
+  github_repo: owner/repo      # used when source: github (open issues via `gh`)
+  goal_file: goal.md           # used when source: goal — a decomposer agent turns
+                               # the goal into tickets, council-reviewed first
+
+# When true, workers stop after council approval — no push, no PR.
+# Flip to false once you trust the pipeline.
+dry_run: true
