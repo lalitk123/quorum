@@ -53,6 +53,16 @@ benchmarks of its own quality.
   were fooled for re-routing. Catches runtime sycophancy/model drift a one-time
   benchmark cannot. Charged to the run budget, never fatal to a real ticket;
   cadence and alert logic are deterministic and unit-tested.
+- **Signed audit receipts** (`agent_team/receipts.py`,
+  `python main.py --verify-receipts`). Every trust-boundary action — dry-run
+  approval, push, PR open — emits an Ed25519-signed receipt (ticket, commit SHA,
+  per-seat votes, timestamp) appended to a hash-chained, append-only log. A
+  third party verifies the whole log offline with the public key alone:
+  payload tampering fails the signature, and because each receipt embeds the
+  previous one's hash, altering or deleting any receipt breaks the chain for all
+  that follow. The tamper-evidence layer under the "auditable" claim.
+  Deterministic, offline, unit-tested (sign/verify, forged-key rejection,
+  mid-log deletion).
 - Goal → council-approved DAG decomposition; dependency-aware scheduling;
   stacked PRs; file-overlap locks; human-only merge.
 
@@ -107,7 +117,6 @@ benchmarks of its own quality.
   tickets) — partial today via revision rounds + ESCALATION.md.
 - Self-improvement of reviewer prompts/decomposer heuristics gated on the
   gold-set regression eval only (spec + regression oracle, never a raw metric).
-- Signed (Ed25519) audit receipts for push/PR actions for regulated contexts.
 
 ## Product
 

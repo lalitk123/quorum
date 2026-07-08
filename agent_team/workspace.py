@@ -75,6 +75,9 @@ class Workspace:
         await _git_async(self.path, "commit", "-m", message)
         return True
 
+    async def head_sha(self) -> str:
+        return (await _git_async(self.path, "rev-parse", "HEAD")).strip()
+
     async def diff_for_review(self) -> str:
         """Only this ticket's changes — dependency code is behind review_base."""
         diff = await _git_async(self.path, "diff", f"{self.review_base}..HEAD")

@@ -84,6 +84,15 @@ backlog:
   file: tasks.yaml             # used when source: file
   github_repo: owner/repo      # used when source: github (open issues via `gh`)
 
+# Signed audit receipts: emit an Ed25519-signed, hash-chained receipt for every
+# trust-boundary action (a dry-run approval, a push, a PR open). A third party can
+# verify the whole log offline with the public key — `python main.py --verify-receipts`
+# — proving what the council decided, on which commit, with no receipts removed.
+audit:
+  enabled: false
+  signing_key_file: .agent_team/audit_key.pem   # Ed25519 private key; created (0600) if missing
+  receipts_file: .agent_team/receipts.jsonl     # append-only, hash-chained log
+
 # When true, workers stop after council approval — no push, no PR.
 # Flip to false once you trust the pipeline.
 dry_run: true

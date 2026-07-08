@@ -1,5 +1,6 @@
 claude-agent-sdk>=0.1.0
 PyYAML>=6.0
+cryptography>=42.0        # Ed25519 signing for audit receipts
 
 # dev / test
 pytest>=8.0

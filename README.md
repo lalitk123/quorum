@@ -129,6 +129,25 @@ python main.py --canary            # every bad gold case vs the live council, on
 Each canary is one extra council review, charged to the run budget and skipped
 (never fatal) if the budget is tight.
 
+## Signed audit receipts
+
+With `audit.enabled: true`, every trust-boundary action — a dry-run approval, a
+push, a PR open — emits an **Ed25519-signed, hash-chained receipt** recording the
+ticket, the exact commit SHA, and each seat's vote. The receipts land in an
+append-only log (`audit.receipts_file`). Anyone with the public key can verify
+the whole log offline, with no access to this process:
+
+```bash
+python main.py --verify-receipts        # checks signatures + the hash chain
+```
+
+Because each receipt carries the hash of the previous one, tampering with a
+payload fails its signature *and* breaks the chain for every later receipt, and
+deleting a receipt from the middle is detected too. The command exits non-zero if
+any receipt fails — a drop-in audit gate for regulated contexts. The signing key
+is created (mode `0600`) on first use if absent; back it up and pin its public
+key, since receipts are only meaningful against a stable operator-held key.
+
 `dry_run: true` (the default) stops after council approval: the branch and
 worktree exist locally under `<repo>/.worktrees/`, nothing is pushed. Flip it
 to `false` to let approved workers push and open PRs.
@@ -164,6 +183,7 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/sandbox.py` | Clean-sandbox test verification (reproduction + teeth check) |
 | `agent_team/bench.py` | Council quality benchmark over a labeled gold set |
 | `agent_team/canary.py` | Live known-bad canary injection (verify the verifier) |
+| `agent_team/receipts.py` | Ed25519-signed, hash-chained audit receipts + verifier |
 | `agent_team/workspace.py` | Git worktrees, commits, diffs, push/PR (deterministic code) |
 | `agent_team/backlog.py` | tasks.yaml or GitHub Issues backlog |
 | `agent_team/runner.py` | Thin `query()` wrapper + JSON extraction |

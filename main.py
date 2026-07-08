@@ -28,6 +28,11 @@ def main() -> None:
         help="Run every bad gold case against the LIVE council once and alert on "
              "any that are approved or under-dissented (verify the verifier).",
     )
+    parser.add_argument(
+        "--verify-receipts", nargs="?", const="", default=None, metavar="RECEIPTS_FILE",
+        help="Verify the signed audit-receipt log (signatures + hash chain) and "
+             "exit. Defaults to audit.receipts_file from the config.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -45,6 +50,16 @@ def main() -> None:
 
     if args.canary is not None:
         asyncio.run(run_canary_sweep(cfg, args.canary))
+        return
+
+    if args.verify_receipts is not None:
+        from agent_team import receipts
+        audit = cfg.get("audit") or {}
+        path = args.verify_receipts or audit.get("receipts_file", ".agent_team/receipts.jsonl")
+        results = receipts.verify_log(path)
+        print(receipts.format_verification(results))
+        if any(not (r["sig_ok"] and r["chain_ok"]) for r in results):
+            sys.exit(1)
         return
 
     try:

@@ -11,10 +11,11 @@ Escalated tickets keep their worktree plus an ESCALATION.md root-cause report.
 """
 
 import logging
+from datetime import datetime, timezone
 
 from claude_agent_sdk import ClaudeAgentOptions
 
-from . import council, sandbox
+from . import council, receipts, sandbox
 from .checks import run_checks, tamper_scan
 from .models import CouncilDecision, Outcome, Ticket, TicketResult
 from .runner import AgentRunError, Budget, BudgetExceeded, extract_json_block, run_agent
@@ -43,6 +44,38 @@ IMPLEMENTER_PROMPT = (
 
 def _ticket_block(ticket: Ticket) -> str:
     return f"## Ticket {ticket.id}: {ticket.title}\n\n{ticket.description}"
+
+
+async def _emit_receipt(cfg: dict, ticket: Ticket, ws: Workspace, commit_sha: str,
+                        decision: CouncilDecision, action: str, pr_url: str = "") -> None:
+    """Best-effort signed audit receipt for a trust-boundary action.
+
+    Never fatal: a signing/IO failure is logged but must not fail an otherwise
+    approved ticket. Chaining + append is synchronous so concurrent workers on
+    the single event loop can't interleave and fork the hash chain.
+    """
+    audit = cfg.get("audit") or {}
+    if not audit.get("enabled"):
+        return
+    try:
+        key = receipts.load_or_create_key(
+            audit.get("signing_key_file", ".agent_team/audit_key.pem"))
+        receipt = receipts.Receipt(
+            action=action, ticket_id=ticket.id, title=ticket.title,
+            branch=ws.branch, base=ws.pr_base, commit_sha=commit_sha,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            council_rule=cfg["push_approval"],
+            approvals=sum(v.approve for v in decision.verdicts),
+            seats=len(decision.verdicts),
+            verdicts=[{"reviewer": v.reviewer, "approve": v.approve}
+                      for v in decision.verdicts],
+            pr_url=pr_url,
+        )
+        receipts.emit(receipt, key,
+                      audit.get("receipts_file", ".agent_team/receipts.jsonl"))
+        log.info("[%s] signed audit receipt emitted (%s)", ticket.id, action)
+    except Exception as exc:
+        log.warning("[%s] could not emit audit receipt: %s", ticket.id, exc)
 
 
 def _write_escalation(ws: Workspace, ticket: Ticket, reason: str,
@@ -275,8 +308,11 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
                                     worktree=str(ws.path), plan_rounds=plan_rounds,
                                     review_rounds=review_rounds, detail=detail)
 
-            # ---- Phase 3: publish.
+            # ---- Phase 3: publish. Every action at the trust boundary — a
+            # dry-run approval or a real push/PR — gets a signed audit receipt.
+            approved_sha = await ws.head_sha()
             if cfg.get("dry_run", True):
+                await _emit_receipt(cfg, ticket, ws, approved_sha, decision, "approved")
                 return TicketResult(ticket, Outcome.APPROVED_DRY_RUN, branch=ws.branch,
                                     worktree=str(ws.path), plan_rounds=plan_rounds,
                                     review_rounds=review_rounds,
@@ -290,6 +326,7 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
                 body=(f"{ticket.description}\n\n## Plan\n{plan_text}\n\n"
                       f"## Council review\n{approvals}"),
             )
+            await _emit_receipt(cfg, ticket, ws, approved_sha, decision, "pr_opened", pr_url)
             await ws.remove(keep_branch=True)
             return TicketResult(ticket, Outcome.PR_OPENED, branch=ws.branch,
                                 plan_rounds=plan_rounds, review_rounds=review_rounds,
