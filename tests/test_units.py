@@ -7,7 +7,7 @@ the decomposer's dependency validation. Run with: pytest -q
 
 import pytest
 
-from agent_team.checks import tamper_scan
+from agent_team.checks import classify_changed_files, tamper_scan
 from agent_team.council import _review_one
 from agent_team.decomposer import _parse_tickets
 from agent_team.models import CouncilDecision, Verdict
@@ -58,6 +58,26 @@ def test_tamper_scan_ignores_non_test_assertions():
         "-    assert cfg is not None\n+    cfg = load()\n"
     )
     assert tamper_scan(diff) == []
+
+
+# ---- Diff file classification (clean-sandbox verifier) -----------------------
+
+def test_classify_changed_files_flags_new_deleted_and_tests():
+    diff = (
+        "diff --git a/src/feature.py b/src/feature.py\n"
+        "new file mode 100644\n+def f(): return 1\n"
+        "diff --git a/src/old.py b/src/old.py\n"
+        "deleted file mode 100644\n-def g(): ...\n"
+        "diff --git a/src/app.py b/src/app.py\n"
+        "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-x\n+y\n"
+        "diff --git a/tests/test_app.py b/tests/test_app.py\n"
+        "new file mode 100644\n+def test_it(): assert True\n"
+    )
+    by_path = {c.path: c for c in classify_changed_files(diff)}
+    assert by_path["src/feature.py"].is_new and not by_path["src/feature.py"].is_test
+    assert by_path["src/old.py"].is_deleted
+    assert not by_path["src/app.py"].is_new and not by_path["src/app.py"].is_deleted
+    assert by_path["tests/test_app.py"].is_test and by_path["tests/test_app.py"].is_new
 
 
 # ---- Verdict JSON extraction -------------------------------------------------

@@ -43,6 +43,15 @@ checks: []
 #  - pytest -q
 #  - ruff check .
 
+# Clean-sandbox test verification: after the checks pass, re-run the worker's
+# COMMITTED tests in a fresh git worktree (no worker residue) to catch tests that
+# only pass because of local state, plus a lightweight "teeth" check that reverts
+# the change's source and confirms its new tests then fail (vacuous/gamed tests
+# are flagged to the council). `test_command` must exit non-zero when tests fail.
+verify:
+  enabled: false
+  test_command: pytest -q
+
 # Hard cost ceilings (USD), tracked from real per-session API cost. A tripped
 # budget escalates fail-closed and preserves the worktree. Omit a key = no cap.
 budget:

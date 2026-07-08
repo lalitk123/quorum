@@ -18,6 +18,15 @@ benchmarks of its own quality.
 - **Deterministic check gate** before the diff council: configurable
   test/linter commands must pass, plus a code-level tamper scan (CI/harness
   edits, deleted assertions, new skip markers) feeding the reviewers.
+- **Clean-sandbox test verification** (`agent_team/sandbox.py`). After the
+  checks pass, the worker's *committed* tests are re-run in a fresh git worktree
+  at the branch HEAD — no untracked files, no worker residue — so a suite that
+  passed only on the worker's dirty local state fails closed back to the worker.
+  A lightweight mutation-style **teeth check** then reverts the change's source
+  (keeping its new tests) and re-runs: if the suite still passes, the new tests
+  never exercise the new behavior (vacuous/gamed), surfaced to the council as an
+  advisory finding. Closes the reward-hacking surface the static tamper scan
+  can't see. Deterministic, no API cost; covered by real-git integration tests.
 - **Hard budget caps** (per-ticket / per-run USD, from real per-session API
   cost) tripping fail-closed to escalation with preserved worktrees.
 - **Heterogeneous jury.** Pluggable reviewer backends (`agent_team/reviewers.py`):
@@ -48,9 +57,9 @@ benchmarks of its own quality.
 - **Canary diffs.** Periodically inject known-bad diffs into the *live* review
   stream; alert when a seat approves one or its dissent rate collapses
   (sycophancy detection — "verify the verifier"). Reuses the bad gold cases.
-- **Clean-sandbox test verification.** A reviewer step that re-runs the
-  worker's tests in a fresh sandbox and checks coverage/mutation, closing the
-  remaining reward-hacking surface the static tamper scan can't see.
+- **Deeper mutation coverage.** The teeth check ships today as a single
+  source-revert; extend toward per-file mutation and coverage deltas so a
+  partially-tested change is scored, not just pass/fail.
 
 ## Next: scale
 

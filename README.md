@@ -43,8 +43,13 @@ via OpenRouter). See `council_models` in `config.yaml`.
 
 A **deterministic gate** runs before the diff council: configured test/linter
 commands must pass in the worktree, and a tamper scan flags gamed tests
-(deleted assertions, skip markers, CI edits). Hard per-ticket and per-run USD
-budget caps trip fail-closed to escalation.
+(deleted assertions, skip markers, CI edits). Optional **clean-sandbox
+verification** re-runs the worker's *committed* tests in a fresh git worktree —
+so a suite that passes only on the worker's dirty local state fails closed —
+and a lightweight teeth check reverts the change's source to confirm its new
+tests actually fail without it (vacuous/gamed tests are surfaced to the
+council). Hard per-ticket and per-run USD budget caps trip fail-closed to
+escalation.
 
 ## Setup
 
@@ -131,6 +136,7 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/council.py` | The five reviewer personas + vote aggregation |
 | `agent_team/reviewers.py` | Pluggable reviewer backends (Claude + OpenAI-compatible) |
 | `agent_team/checks.py` | Deterministic test/linter gate + diff tamper scan |
+| `agent_team/sandbox.py` | Clean-sandbox test verification (reproduction + teeth check) |
 | `agent_team/bench.py` | Council quality benchmark over a labeled gold set |
 | `agent_team/workspace.py` | Git worktrees, commits, diffs, push/PR (deterministic code) |
 | `agent_team/backlog.py` | tasks.yaml or GitHub Issues backlog |

@@ -14,7 +14,7 @@ import logging
 
 from claude_agent_sdk import ClaudeAgentOptions
 
-from . import council
+from . import council, sandbox
 from .checks import run_checks, tamper_scan
 from .models import CouncilDecision, Outcome, Ticket, TicketResult
 from .runner import AgentRunError, Budget, BudgetExceeded, extract_json_block, run_agent
@@ -73,6 +73,7 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
     council_model = cfg["council_model"]
     council_models = cfg.get("council_models") or {}
     check_commands = cfg.get("checks") or []
+    verify_cfg = cfg.get("verify") or {}
 
     budget_cfg = cfg.get("budget") or {}
     ticket_budget = Budget(budget_cfg.get("per_ticket_usd"), f"ticket {ticket.id}")
@@ -202,6 +203,40 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
                        if tamper_findings else "No findings.")
                 )
 
+                # Clean-sandbox verification: re-run the committed tests in a
+                # fresh worktree (catches reliance on local state) plus a teeth
+                # check on the new tests. A reproduction failure is a hard gate
+                # failure (back to the worker); teeth findings inform the council.
+                sandbox_section = ""
+                if verify_cfg.get("enabled"):
+                    test_command = verify_cfg.get("test_command")
+                    if not test_command:
+                        log.warning("[%s] verify.enabled but no verify.test_command; "
+                                    "skipping sandbox verification", ticket.id)
+                    else:
+                        report = await sandbox.verify_in_sandbox(
+                            cfg["repo_path"], ws.branch, ws.review_base, diff,
+                            test_command)
+                        if report.hard_failure:
+                            last_gate_failure = report.hard_failure
+                            log.info("[%s] clean-sandbox verification failed (round %d)",
+                                     ticket.id, review_rounds)
+                            impl_prompt = (
+                                f"{_ticket_block(ticket)}\n\nYour committed change "
+                                "failed independent verification. Fix the code so it "
+                                "passes from a clean checkout; do not weaken tests.\n\n"
+                                f"{report.hard_failure}")
+                            continue
+                        if report.error:
+                            log.warning("[%s] sandbox verification errored: %s",
+                                        ticket.id, report.error)
+                        if report.findings:
+                            sandbox_section = (
+                                "\n\n## Clean-sandbox verification\n"
+                                + "\n".join(f"- {f}" for f in report.findings)
+                                + "\nTreat a teeth-check failure the diff does not "
+                                  "convincingly justify as grounds for rejection.")
+
                 log.info("[%s] review round %d -> council", ticket.id, review_rounds)
                 decision = await council.convene(
                     material=(
@@ -209,7 +244,8 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
                         "directory contains the full changed codebase, and the "
                         "deterministic check gate (tests/linters) already passed.\n\n"
                         f"{_ticket_block(ticket)}\n\n## Approved plan\n{plan_text}"
-                        f"{tamper_section}\n\n## Diff\n```diff\n{diff}\n```"
+                        f"{tamper_section}{sandbox_section}"
+                        f"\n\n## Diff\n```diff\n{diff}\n```"
                     ),
                     cwd=str(ws.path), model=council_model, rule=cfg["push_approval"],
                     models=council_models, budgets=budgets,

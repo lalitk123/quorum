@@ -9,6 +9,7 @@ are spent only on genuine judgment calls.
 import asyncio
 import re
 import subprocess
+from dataclasses import dataclass
 
 CHECK_TIMEOUT_SECONDS = 600
 OUTPUT_TAIL_CHARS = 4000
@@ -44,6 +45,41 @@ async def run_checks(commands: list[str], cwd: str) -> list[tuple[str, bool, str
     for command in commands:
         results.append(await asyncio.to_thread(_run_one, command, cwd))
     return results
+
+
+@dataclass
+class FileChange:
+    """One file touched by a diff, classified for sandbox verification."""
+    path: str
+    is_new: bool = False
+    is_deleted: bool = False
+    is_test: bool = False
+
+
+def classify_changed_files(diff: str) -> list[FileChange]:
+    """Parse a unified diff into per-file changes (new/deleted/test flags).
+
+    Shared with the clean-sandbox verifier, which needs to know which files are
+    tests (keep them) versus source (revert them) and which source files are new
+    (delete to revert) versus modified (checkout the base version).
+    """
+    changes: list[FileChange] = []
+    cur: FileChange | None = None
+    for line in diff.splitlines():
+        if line.startswith("diff --git"):
+            if cur is not None:
+                changes.append(cur)
+            parts = line.split(" b/", 1)
+            path = parts[1].strip() if len(parts) == 2 else ""
+            cur = FileChange(path=path, is_test=bool(TEST_PATH_PATTERN.search(path)))
+        elif cur is not None:
+            if line.startswith("new file mode"):
+                cur.is_new = True
+            elif line.startswith("deleted file mode"):
+                cur.is_deleted = True
+    if cur is not None:
+        changes.append(cur)
+    return changes
 
 
 def tamper_scan(diff: str) -> list[str]:
