@@ -7,6 +7,32 @@ variance). Positioning: the differentiator is not "agents that write code" —
 it is a **trustworthy, auditable, fail-closed review gate** with published
 benchmarks of its own quality.
 
+## Research program (up a level: from an engineering system to a contribution)
+
+The coding worker is becoming commoditized; the durable, unsolved problem is
+*measurable trust in automated review*. Quorum's north star is an **AI software
+assurance layer** whose reviewers are themselves measured instruments. Three
+research questions organize the work:
+
+- **RQ1 — Can we measure LLM reviewer reliability quantitatively?** Model each
+  seat as a noisy sensor; estimate sensitivity/specificity with uncertainty from
+  ground-truth-labeled judgments; aggregate with calibrated Bayesian inference
+  instead of majority voting. *(Substrate shipped: `reliability.py`,
+  `judgments.py` — see Done.)*
+- **RQ2 — Can we adaptively pick reviewers to maximize defect recall per dollar?**
+  Condition the reliability estimates on the change (bug type, language, risk
+  class) and select the seats that buy the most detection per dollar.
+- **RQ3 — Can we detect reviewer degradation automatically?** The canary injector
+  exists; persist its outcomes as a per-seat time series and run a sequential /
+  change-point test so a seat that starts approving known-bad diffs trips an
+  alert on its own.
+
+The enabler for all three is a **free labeled-data engine**: gold cases,
+canaries, and mutants are defective *by construction*, so every seat verdict on
+them is a labeled reliability datapoint — no human labeling required. The honest
+scope: on a tiny corpus these estimates have wide intervals; the contribution is
+the methodology + infrastructure, with results that sharpen as the log grows.
+
 ## Done
 
 - Fail-closed council with five seats (architect, security, QA, product,
@@ -63,6 +89,17 @@ benchmarks of its own quality.
   that follow. The tamper-evidence layer under the "auditable" claim.
   Deterministic, offline, unit-tested (sign/verify, forged-key rejection,
   mid-log deletion).
+- **Reviewer reliability model + Bayesian trust aggregation** (RQ1 substrate:
+  `agent_team/reliability.py`, `agent_team/judgments.py`). Every seat verdict is
+  logged with its ground-truth label; from that corpus each seat's sensitivity
+  (defect recall) and specificity (true-approve) are estimated as Beta-Binomial
+  posteriors with exact credible intervals (self-contained regularized incomplete
+  beta — no scipy). Aggregation upgrades from majority voting to a calibrated
+  posterior `P(defect | votes)` that weights seats by measured reliability and
+  ignores coin-flippers automatically; a `conservative` mode uses each seat's
+  lower credible bound (fail-closed). `--bench` grows the labeled corpus and
+  reports the model; `python main.py --reliability` prints it. Deterministic,
+  unit-tested against hand-computed probabilities.
 - Goal → council-approved DAG decomposition; dependency-aware scheduling;
   stacked PRs; file-overlap locks; human-only merge.
 

@@ -33,6 +33,12 @@ def main() -> None:
         help="Verify the signed audit-receipt log (signatures + hash chain) and "
              "exit. Defaults to audit.receipts_file from the config.",
     )
+    parser.add_argument(
+        "--reliability", nargs="?", const="", default=None, metavar="JUDGMENT_LOG",
+        help="Print the estimated per-seat reviewer reliability (sensitivity/"
+             "specificity with credible intervals) from the judgment log and exit. "
+             "Defaults to reliability.log_file from the config.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -60,6 +66,14 @@ def main() -> None:
         print(receipts.format_verification(results))
         if any(not (r["sig_ok"] and r["chain_ok"]) for r in results):
             sys.exit(1)
+        return
+
+    if args.reliability is not None:
+        from agent_team import judgments, reliability
+        path = args.reliability or (cfg.get("reliability") or {}).get(
+            "log_file", ".agent_team/judgments.jsonl")
+        model = reliability.estimate_reliability(judgments.load_judgments(path))
+        print(reliability.format_reliability(model))
         return
 
     try:

@@ -10,7 +10,12 @@ twice — once to approve its plan, and again to approve its diff before anythin
 pushed to GitHub. The differentiator is not the agents that write code — it is the
 trustworthy, auditable, fail-closed *review gate* they must pass.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design and
+[ROADMAP.md](ROADMAP.md) for the research program — Quorum's north star is an **AI
+software assurance layer** whose reviewers are themselves *measured instruments*,
+organized around three questions: can we measure reviewer reliability (RQ1),
+adaptively pick reviewers per dollar (RQ2), and detect reviewer drift
+automatically (RQ3)?
 
 > The git repository slug is `multi-agent-threading`; **Quorum** is the product name.
 
@@ -120,6 +125,38 @@ directories (`case.yaml` with a `label:`, a `diff.patch`, and an optional
 `workspace/` tree). This is real API spend, bounded by `budget.per_ticket_usd`
 per case.
 
+## Reviewer reliability (measured, not assumed)
+
+Majority voting treats every reviewer as equally trustworthy. Quorum instead
+*measures* them. Every seat verdict is logged with its ground-truth label — gold
+cases, canaries, and mutants are defective by construction, so labels come free —
+and each seat is modeled as a noisy sensor: its **sensitivity** (fraction of real
+defects it catches) and **specificity** (fraction of clean diffs it doesn't block)
+are estimated as Beta-Binomial posteriors with credible intervals, so a seat
+judged on three cases and one judged on three hundred aren't treated alike.
+
+```bash
+python main.py --bench          # grows the labeled corpus + reports reliability
+python main.py --reliability    # prints the current per-seat model
+```
+
+```
+=== Reviewer reliability (Bayesian, from labeled judgments) ===
+  seat          sensitivity[90% CI] (n_def)   specificity[90% CI] (n_clean)
+  product        50% [ 28- 72] (n=12)        96% [ 85-100] (n=12)
+  security       96% [ 85-100] (n=12)        96% [ 85-100] (n=12)
+  adversary      96% [ 85-100] (n=12)        73% [ 52- 90] (n=12)
+```
+
+Those estimates then drive **calibrated aggregation** (`reliability.py`): instead
+of `3-of-5 approve`, the posterior `P(defect | votes)` weights each seat by its
+measured reliability — a coin-flip seat (sensitivity ≈ specificity ≈ 0.5)
+contributes nothing automatically, and a proven seat dominates. A `conservative`
+mode uses each seat's *lower* credible bound, keeping the gate fail-closed against
+thinly-evidenced reviewers. The math is dependency-free and unit-tested against
+hand-computed probabilities. *(This is RQ1; RQ2 conditions these estimates on the
+change to pick reviewers per dollar, RQ3 tracks them over time for drift.)*
+
 ## Verify the verifier (canary diffs)
 
 A benchmark measures the gate once; a live gate can still drift into a rubber
@@ -207,6 +244,8 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/risk.py` | Risk classifier + graduated review strictness (human merge stays) |
 | `agent_team/bench.py` | Council quality benchmark over a labeled gold set |
 | `agent_team/canary.py` | Live known-bad canary injection (verify the verifier) |
+| `agent_team/reliability.py` | Reviewer reliability model + Bayesian trust aggregation (RQ1) |
+| `agent_team/judgments.py` | Persistent labeled reviewer-judgment log (the dataset) |
 | `agent_team/receipts.py` | Ed25519-signed, hash-chained audit receipts + verifier |
 | `agent_team/workspace.py` | Git worktrees, commits, diffs, push/PR (deterministic code) |
 | `agent_team/backlog.py` | tasks.yaml or GitHub Issues backlog |

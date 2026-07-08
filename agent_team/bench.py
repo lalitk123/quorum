@@ -29,7 +29,7 @@ from pathlib import Path
 
 import yaml
 
-from . import council
+from . import council, judgments, reliability
 from .checks import tamper_scan
 from .models import Verdict
 from .runner import Budget
@@ -296,4 +296,56 @@ async def run_bench(cfg: dict, gold_dir: str) -> dict:
     results = list(await asyncio.gather(*(bounded(c) for c in cases)))
     metrics = compute_metrics(results)
     print(format_report(metrics, results))
+
+    # Grow the reviewer-judgment dataset and estimate reliability from the whole
+    # accumulated log. Gold cases are ground-truth-labeled, so every seat verdict
+    # is a labeled training row for the reliability model (RQ1).
+    rel_log = (cfg.get("reliability") or {}).get("log_file")
+    if rel_log:
+        judgments.append_judgments(rel_log, judgments_from_results(results, "gold"))
+        model = reliability.estimate_reliability(judgments.load_judgments(rel_log))
+        print(reliability.format_reliability(model))
+        print(_bayesian_vs_gate(results, model, metrics))
     return metrics
+
+
+def judgments_from_results(results: list[CaseResult], source: str) -> list[dict]:
+    """One labeled judgment per seat verdict on a ground-truth-labeled case."""
+    rows: list[dict] = []
+    for r in results:
+        if r.error:
+            continue
+        label = "clean" if r.expected_approve else "defect"
+        for v in r.verdicts:
+            rows.append({
+                "seat": v.reviewer,
+                "verdict": "approve" if v.approve else "reject",
+                "label": label, "source": source, "case_id": r.case_id,
+            })
+    return rows
+
+
+def _bayesian_vs_gate(results: list[CaseResult], model: dict, metrics: dict) -> str:
+    """Show the calibrated posterior next to the deterministic gate decision.
+
+    In-sample (the model was estimated from a log that includes this run), so this
+    demonstrates the aggregation, not a held-out result. Reject if the posterior
+    P(defect) crosses 0.5; compare against what the actual gate did.
+    """
+    n = metrics["n_scored"] or 1
+    base_rate = metrics["n_bad"] / n
+    lines = ["", "Bayesian trust vs gate (in-sample demo; reject if P(defect) >= 0.5):"]
+    agree = 0
+    for r in results:
+        if r.error:
+            continue
+        votes = [(v.reviewer, not v.approve) for v in r.verdicts]
+        p_def = reliability.posterior_defect_prob(votes, model, base_rate=base_rate)
+        bayes_reject = p_def >= 0.5
+        gate_reject = not r.decision_approved
+        agree += bayes_reject == gate_reject
+        lines.append(f"  {r.case_id:<24} trust={1 - p_def:4.0%}  "
+                     f"bayes={'reject' if bayes_reject else 'approve':<7} "
+                     f"gate={'reject' if gate_reject else 'approve'}")
+    lines.append(f"  agreement with gate: {agree}/{metrics['n_scored']}")
+    return "\n".join(lines)

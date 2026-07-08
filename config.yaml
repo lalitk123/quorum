@@ -76,6 +76,13 @@ canary:
   sample_every: 5              # inject one canary per N real diff reviews
   min_dissent: 2               # fewer seats rejecting a known defect => warning
 
+# Reviewer-judgment dataset + reliability model. When log_file is set, --bench
+# appends one labeled judgment per seat verdict and reports each seat's estimated
+# sensitivity/specificity (Beta-Binomial, with credible intervals). The corpus
+# grows across runs; `python main.py --reliability` prints the current model.
+reliability:
+  log_file: .agent_team/judgments.jsonl
+
 # Backlog source — defaults to autonomous goal mode: a decomposer agent turns
 # goal.md into a ticket backlog (council-reviewed) and the team builds it.
 backlog:
