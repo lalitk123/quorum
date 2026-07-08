@@ -38,7 +38,9 @@ reviews count as rejections (fail closed).
 ## Setup
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+# Requires Python 3.10+ (the Agent SDK does not support 3.9;
+# on macOS: brew install python@3.12)
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 

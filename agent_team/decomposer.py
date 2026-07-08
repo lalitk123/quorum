@@ -13,7 +13,7 @@ from claude_agent_sdk import ClaudeAgentOptions
 
 from . import council
 from .models import Ticket
-from .runner import extract_json_block, run_agent
+from .runner import Budget, extract_json_block, run_agent
 
 log = logging.getLogger("decomposer")
 
@@ -76,7 +76,9 @@ def _parse_tickets(text: str) -> list[Ticket] | str:
     return tickets
 
 
-async def decompose(cfg: dict, goal: str) -> list[Ticket]:
+async def decompose(cfg: dict, goal: str,
+                    run_budget: Budget | None = None) -> list[Ticket]:
+    budgets = (run_budget,) if run_budget else ()
     options = ClaudeAgentOptions(
         system_prompt=DECOMPOSER_PROMPT,
         allowed_tools=["Read", "Grep", "Glob"],
@@ -95,7 +97,7 @@ async def decompose(cfg: dict, goal: str) -> list[Ticket]:
                 "\n\nYour previous breakdown was rejected. Address every "
                 f"objection:\n{feedback}\n\nPrevious breakdown:\n{breakdown}"
             )
-        breakdown = await run_agent(prompt, options)
+        breakdown = await run_agent(prompt, options, budgets=budgets)
 
         tickets = _parse_tickets(breakdown)
         if isinstance(tickets, str):
@@ -114,6 +116,7 @@ async def decompose(cfg: dict, goal: str) -> list[Ticket]:
             ),
             cwd=cfg["repo_path"], model=cfg["council_model"],
             rule=cfg["plan_approval"],
+            models=cfg.get("council_models") or {}, budgets=budgets,
         )
         if decision.approved:
             return tickets

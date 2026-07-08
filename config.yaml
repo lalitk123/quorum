@@ -13,6 +13,25 @@ push_approval: unanimous       # majority | unanimous
 worker_model: opus
 council_model: sonnet
 
+# Optional per-seat model routing for the council (seats: architect, security,
+# qa, product, adversary). Diversifying seats decorrelates reviewer errors —
+# weak-form within Claude tiers today; cross-provider seats are on the roadmap.
+council_models: {}
+#  adversary: opus
+#  security: opus
+
+# Deterministic gate: commands that must exit 0 in the worktree before the
+# council reviews a diff. Failures are fed straight back to the worker.
+checks: []
+#  - pytest -q
+#  - ruff check .
+
+# Hard cost ceilings (USD), tracked from real per-session API cost. A tripped
+# budget escalates fail-closed and preserves the worktree. Omit a key = no cap.
+budget:
+  per_ticket_usd: 10
+  per_run_usd: 100
+
 # Backlog source — defaults to autonomous goal mode: a decomposer agent turns
 # goal.md into a ticket backlog (council-reviewed) and the team builds it.
 backlog:

@@ -7,6 +7,7 @@ import yaml
 
 from agent_team.decomposer import DecompositionRejected
 from agent_team.orchestrator import run
+from agent_team.runner import BudgetExceeded
 
 
 def main() -> None:
@@ -28,7 +29,7 @@ def main() -> None:
 
     try:
         asyncio.run(run(cfg))
-    except DecompositionRejected as exc:
+    except (DecompositionRejected, BudgetExceeded) as exc:
         print(f"\nRun aborted before any ticket started: {exc}", file=sys.stderr)
         sys.exit(1)
 

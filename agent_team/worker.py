@@ -2,8 +2,12 @@
 
 worktree setup (branching from dependency branches when the ticket has deps)
   -> plan -> council plan review (majority)
-  -> implement -> council pre-push review (unanimous)
+  -> implement -> deterministic check gate (tests/linters + tamper scan)
+  -> council pre-push review (unanimous)
   -> push branch + open PR (stacked on the dependency branch when applicable)
+
+Everything runs under hard budget caps; a tripped cap escalates fail-closed.
+Escalated tickets keep their worktree plus an ESCALATION.md root-cause report.
 """
 
 import logging
@@ -11,8 +15,9 @@ import logging
 from claude_agent_sdk import ClaudeAgentOptions
 
 from . import council
-from .models import Outcome, Ticket, TicketResult
-from .runner import AgentRunError, extract_json_block, run_agent
+from .checks import run_checks, tamper_scan
+from .models import CouncilDecision, Outcome, Ticket, TicketResult
+from .runner import AgentRunError, Budget, BudgetExceeded, extract_json_block, run_agent
 from .workspace import GitError, Workspace
 
 log = logging.getLogger("worker")
@@ -30,8 +35,9 @@ IMPLEMENTER_PROMPT = (
     "You are a software engineer implementing an approved plan in this working "
     "directory. Follow the plan; if reality forces a deviation, keep it minimal "
     "and note it. Run the project's tests (or at minimum the tests you added) "
-    "and make them pass before finishing. Do not run any git commands — "
-    "committing and pushing are handled outside this session."
+    "and make them pass before finishing. Never weaken, delete, or skip "
+    "existing tests to make them pass — fix the code instead. Do not run any "
+    "git commands — committing and pushing are handled outside this session."
 )
 
 
@@ -39,11 +45,38 @@ def _ticket_block(ticket: Ticket) -> str:
     return f"## Ticket {ticket.id}: {ticket.title}\n\n{ticket.description}"
 
 
+def _write_escalation(ws: Workspace, ticket: Ticket, reason: str,
+                      plan_text: str = "", decision: CouncilDecision | None = None) -> None:
+    """Root-cause report for humans, written into the preserved worktree."""
+    lines = [f"# Escalation: {ticket.id} — {ticket.title}", "",
+             f"**Reason:** {reason}", ""]
+    if decision:
+        lines.append("## Council verdicts (final round)")
+        for v in decision.verdicts:
+            mark = "approve" if v.approve else "REJECT"
+            lines.append(f"- **{v.reviewer}** ({mark}): {v.reasoning}")
+            lines.extend(f"  - {e}" for e in v.evidence)
+        lines.append("")
+    if plan_text:
+        lines += ["## Last plan", plan_text, ""]
+    try:
+        (ws.path / "ESCALATION.md").write_text("\n".join(lines))
+    except OSError:
+        log.warning("[%s] could not write ESCALATION.md", ticket.id)
+
+
 async def run_ticket(ticket: Ticket, cfg: dict, locks,
-                     dep_branches: list[str] | None = None) -> TicketResult:
+                     dep_branches: list[str] | None = None,
+                     run_budget: Budget | None = None) -> TicketResult:
     max_rounds = int(cfg["max_review_rounds"])
     worker_model = cfg["worker_model"]
     council_model = cfg["council_model"]
+    council_models = cfg.get("council_models") or {}
+    check_commands = cfg.get("checks") or []
+
+    budget_cfg = cfg.get("budget") or {}
+    ticket_budget = Budget(budget_cfg.get("per_ticket_usd"), f"ticket {ticket.id}")
+    budgets = tuple(b for b in (ticket_budget, run_budget) if b)
 
     # ---- Phase 0: isolated worktree. Dependent tickets start from their
     # dependencies' branches so the code they build on is present.
@@ -55,127 +88,172 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
         return TicketResult(ticket, Outcome.BLOCKED,
                             detail=f"could not integrate dependency branches: {exc}")
 
-    # ---- Phase 1: plan inside the worktree (read-only), until the council
-    # approves or we run out of rounds.
-    plan_options = ClaudeAgentOptions(
-        system_prompt=PLANNER_PROMPT,
-        allowed_tools=["Read", "Grep", "Glob"],
-        permission_mode="dontAsk",
-        cwd=str(ws.path),
-        model=worker_model,
-        setting_sources=["project"],
-    )
-
     plan_text = ""
-    feedback = ""
-    plan_rounds = 0
-    for plan_rounds in range(1, max_rounds + 1):
-        prompt = _ticket_block(ticket)
-        if feedback:
-            prompt += (
-                "\n\nYour previous plan was rejected by the review council. "
-                f"Address every objection:\n{feedback}\n\nPrevious plan:\n{plan_text}"
-            )
-        try:
-            plan_text = await run_agent(prompt, plan_options)
-        except AgentRunError as exc:
-            return TicketResult(ticket, Outcome.FAILED, worktree=str(ws.path),
-                                branch=ws.branch, detail=f"planning failed: {exc}")
-
-        log.info("[%s] plan round %d -> council", ticket.id, plan_rounds)
-        decision = await council.convene(
-            material=(
-                "Review this implementation PLAN (no code exists yet).\n\n"
-                f"{_ticket_block(ticket)}\n\n## Proposed plan\n{plan_text}"
-            ),
-            cwd=str(ws.path), model=council_model, rule=cfg["plan_approval"],
-        )
-        if decision.approved:
-            break
-        feedback = decision.feedback()
-        log.info("[%s] plan rejected:\n%s", ticket.id, feedback)
-    else:
-        return TicketResult(ticket, Outcome.ESCALATED_PLAN, worktree=str(ws.path),
-                            branch=ws.branch, detail=feedback, plan_rounds=plan_rounds)
-
-    # ---- Claim the files this plan touches so parallel workers don't collide.
-    parsed = extract_json_block(plan_text)
-    files = [f for f in (parsed or {}).get("files", []) if isinstance(f, str)]
-    if not files:
-        log.warning("[%s] plan declared no file list; skipping overlap locking", ticket.id)
-    await locks.acquire(ticket.id, files)
-
     try:
-        # ---- Phase 2: implement, then loop through pre-push council review
-        # until unanimous approval or escalation.
-        impl_options = ClaudeAgentOptions(
-            system_prompt=IMPLEMENTER_PROMPT,
-            allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
-            permission_mode="acceptEdits",
+        # ---- Phase 1: plan inside the worktree (read-only), until the council
+        # approves or we run out of rounds.
+        plan_options = ClaudeAgentOptions(
+            system_prompt=PLANNER_PROMPT,
+            allowed_tools=["Read", "Grep", "Glob"],
+            permission_mode="dontAsk",
             cwd=str(ws.path),
             model=worker_model,
             setting_sources=["project"],
         )
 
-        impl_prompt = f"{_ticket_block(ticket)}\n\n## Approved plan\n{plan_text}"
-        review_rounds = 0
-        for review_rounds in range(1, max_rounds + 1):
+        feedback = ""
+        plan_rounds = 0
+        decision: CouncilDecision | None = None
+        for plan_rounds in range(1, max_rounds + 1):
+            prompt = _ticket_block(ticket)
+            if feedback:
+                prompt += (
+                    "\n\nYour previous plan was rejected by the review council. "
+                    f"Address every objection:\n{feedback}\n\nPrevious plan:\n{plan_text}"
+                )
             try:
-                await run_agent(impl_prompt, impl_options)
+                plan_text = await run_agent(prompt, plan_options, budgets=budgets)
             except AgentRunError as exc:
-                return TicketResult(ticket, Outcome.FAILED, branch=ws.branch,
-                                    worktree=str(ws.path), plan_rounds=plan_rounds,
-                                    detail=f"implementation failed: {exc}")
+                return TicketResult(ticket, Outcome.FAILED, worktree=str(ws.path),
+                                    branch=ws.branch, detail=f"planning failed: {exc}")
 
-            committed = await ws.commit_all(f"{ticket.id}: {ticket.title} (round {review_rounds})")
-            diff = await ws.diff_for_review()
-            if not committed and not diff.strip():
-                return TicketResult(ticket, Outcome.FAILED, branch=ws.branch,
-                                    worktree=str(ws.path), plan_rounds=plan_rounds,
-                                    detail="agent finished without producing changes")
-
-            log.info("[%s] review round %d -> council", ticket.id, review_rounds)
+            log.info("[%s] plan round %d -> council", ticket.id, plan_rounds)
             decision = await council.convene(
                 material=(
-                    "Review this DIFF before it is pushed to GitHub. The working "
-                    "directory contains the full changed codebase.\n\n"
-                    f"{_ticket_block(ticket)}\n\n## Approved plan\n{plan_text}"
-                    f"\n\n## Diff\n```diff\n{diff}\n```"
+                    "Review this implementation PLAN (no code exists yet).\n\n"
+                    f"{_ticket_block(ticket)}\n\n## Proposed plan\n{plan_text}"
                 ),
-                cwd=str(ws.path), model=council_model, rule=cfg["push_approval"],
+                cwd=str(ws.path), model=council_model, rule=cfg["plan_approval"],
+                models=council_models, budgets=budgets,
             )
             if decision.approved:
                 break
-            impl_prompt = (
-                f"{_ticket_block(ticket)}\n\nThe review council rejected your "
-                f"current changes. Revise the code in place to address every "
-                f"objection:\n{decision.feedback()}"
-            )
-            log.info("[%s] diff rejected:\n%s", ticket.id, decision.feedback())
+            feedback = decision.feedback()
+            log.info("[%s] plan rejected:\n%s", ticket.id, feedback)
         else:
-            return TicketResult(ticket, Outcome.ESCALATED_REVIEW, branch=ws.branch,
-                                worktree=str(ws.path), plan_rounds=plan_rounds,
-                                review_rounds=review_rounds,
-                                detail=decision.feedback())
+            _write_escalation(ws, ticket, "council never approved the plan",
+                              plan_text, decision)
+            return TicketResult(ticket, Outcome.ESCALATED_PLAN, worktree=str(ws.path),
+                                branch=ws.branch, detail=feedback, plan_rounds=plan_rounds)
 
-        # ---- Phase 3: publish.
-        if cfg.get("dry_run", True):
-            return TicketResult(ticket, Outcome.APPROVED_DRY_RUN, branch=ws.branch,
-                                worktree=str(ws.path), plan_rounds=plan_rounds,
-                                review_rounds=review_rounds,
-                                detail="dry_run enabled — branch ready, not pushed")
+        # ---- Claim the files this plan touches so parallel workers don't collide.
+        parsed = extract_json_block(plan_text)
+        files = [f for f in (parsed or {}).get("files", []) if isinstance(f, str)]
+        if not files:
+            log.warning("[%s] plan declared no file list; skipping overlap locking", ticket.id)
+        await locks.acquire(ticket.id, files)
 
-        approvals = "\n".join(
-            f"- **{v.reviewer}**: {v.reasoning}" for v in decision.verdicts
-        )
-        pr_url = await ws.push_and_open_pr(
-            title=f"{ticket.id}: {ticket.title}",
-            body=(f"{ticket.description}\n\n## Plan\n{plan_text}\n\n"
-                  f"## Council review\n{approvals}"),
-        )
-        await ws.remove(keep_branch=True)
-        return TicketResult(ticket, Outcome.PR_OPENED, branch=ws.branch,
-                            plan_rounds=plan_rounds, review_rounds=review_rounds,
-                            detail=pr_url)
-    finally:
-        await locks.release(ticket.id)
+        try:
+            # ---- Phase 2: implement, then pass the deterministic check gate,
+            # then loop through pre-push council review until unanimous
+            # approval or escalation.
+            impl_options = ClaudeAgentOptions(
+                system_prompt=IMPLEMENTER_PROMPT,
+                allowed_tools=["Read", "Write", "Edit", "Bash", "Grep", "Glob"],
+                permission_mode="acceptEdits",
+                cwd=str(ws.path),
+                model=worker_model,
+                setting_sources=["project"],
+            )
+
+            impl_prompt = f"{_ticket_block(ticket)}\n\n## Approved plan\n{plan_text}"
+            review_rounds = 0
+            decision = None
+            last_gate_failure = ""
+            for review_rounds in range(1, max_rounds + 1):
+                try:
+                    await run_agent(impl_prompt, impl_options, budgets=budgets)
+                except AgentRunError as exc:
+                    return TicketResult(ticket, Outcome.FAILED, branch=ws.branch,
+                                        worktree=str(ws.path), plan_rounds=plan_rounds,
+                                        detail=f"implementation failed: {exc}")
+
+                committed = await ws.commit_all(
+                    f"{ticket.id}: {ticket.title} (round {review_rounds})")
+                diff = await ws.diff_for_review()
+                if not committed and not diff.strip():
+                    return TicketResult(ticket, Outcome.FAILED, branch=ws.branch,
+                                        worktree=str(ws.path), plan_rounds=plan_rounds,
+                                        detail="agent finished without producing changes")
+
+                # Deterministic gate: don't spend reviewer tokens on a diff
+                # that fails its own tests or linters.
+                check_results = await run_checks(check_commands, str(ws.path))
+                failed = [(cmd, out) for cmd, ok, out in check_results if not ok]
+                if failed:
+                    last_gate_failure = "\n\n".join(
+                        f"$ {cmd}\n{out}" for cmd, out in failed)
+                    log.info("[%s] deterministic checks failed (round %d)",
+                             ticket.id, review_rounds)
+                    impl_prompt = (
+                        f"{_ticket_block(ticket)}\n\nThe deterministic check gate "
+                        "failed — fix the code so every check passes. Do not "
+                        "weaken or skip the checks themselves.\n\n"
+                        f"{last_gate_failure}"
+                    )
+                    continue
+
+                tamper_findings = tamper_scan(diff)
+                tamper_section = (
+                    "\n\n## Automated tamper scan\n"
+                    + ("\n".join(f"- {f}" for f in tamper_findings)
+                       + "\nTreat any finding above that the diff does not "
+                         "convincingly justify as grounds for rejection."
+                       if tamper_findings else "No findings.")
+                )
+
+                log.info("[%s] review round %d -> council", ticket.id, review_rounds)
+                decision = await council.convene(
+                    material=(
+                        "Review this DIFF before it is pushed to GitHub. The working "
+                        "directory contains the full changed codebase, and the "
+                        "deterministic check gate (tests/linters) already passed.\n\n"
+                        f"{_ticket_block(ticket)}\n\n## Approved plan\n{plan_text}"
+                        f"{tamper_section}\n\n## Diff\n```diff\n{diff}\n```"
+                    ),
+                    cwd=str(ws.path), model=council_model, rule=cfg["push_approval"],
+                    models=council_models, budgets=budgets,
+                )
+                if decision.approved:
+                    break
+                impl_prompt = (
+                    f"{_ticket_block(ticket)}\n\nThe review council rejected your "
+                    f"current changes. Revise the code in place to address every "
+                    f"objection:\n{decision.feedback()}"
+                )
+                log.info("[%s] diff rejected:\n%s", ticket.id, decision.feedback())
+            else:
+                reason = ("council never approved the diff" if decision
+                          else "deterministic checks kept failing")
+                detail = decision.feedback() if decision else last_gate_failure[:500]
+                _write_escalation(ws, ticket, reason, plan_text, decision)
+                return TicketResult(ticket, Outcome.ESCALATED_REVIEW, branch=ws.branch,
+                                    worktree=str(ws.path), plan_rounds=plan_rounds,
+                                    review_rounds=review_rounds, detail=detail)
+
+            # ---- Phase 3: publish.
+            if cfg.get("dry_run", True):
+                return TicketResult(ticket, Outcome.APPROVED_DRY_RUN, branch=ws.branch,
+                                    worktree=str(ws.path), plan_rounds=plan_rounds,
+                                    review_rounds=review_rounds,
+                                    detail="dry_run enabled — branch ready, not pushed")
+
+            approvals = "\n".join(
+                f"- **{v.reviewer}**: {v.reasoning}" for v in decision.verdicts
+            )
+            pr_url = await ws.push_and_open_pr(
+                title=f"{ticket.id}: {ticket.title}",
+                body=(f"{ticket.description}\n\n## Plan\n{plan_text}\n\n"
+                      f"## Council review\n{approvals}"),
+            )
+            await ws.remove(keep_branch=True)
+            return TicketResult(ticket, Outcome.PR_OPENED, branch=ws.branch,
+                                plan_rounds=plan_rounds, review_rounds=review_rounds,
+                                detail=pr_url)
+        finally:
+            await locks.release(ticket.id)
+    except BudgetExceeded as exc:
+        log.warning("[%s] %s", ticket.id, exc)
+        _write_escalation(ws, ticket, str(exc), plan_text)
+        return TicketResult(ticket, Outcome.BUDGET_EXCEEDED, branch=ws.branch,
+                            worktree=str(ws.path), detail=str(exc))

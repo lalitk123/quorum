@@ -15,6 +15,7 @@ class Verdict:
     reviewer: str
     approve: bool
     reasoning: str
+    evidence: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -24,9 +25,12 @@ class CouncilDecision:
 
     def feedback(self) -> str:
         """Consolidated objections from rejecting reviewers, fed back to the worker."""
-        lines = [
-            f"[{v.reviewer}] {v.reasoning}" for v in self.verdicts if not v.approve
-        ]
+        lines = []
+        for v in self.verdicts:
+            if v.approve:
+                continue
+            lines.append(f"[{v.reviewer}] {v.reasoning}")
+            lines.extend(f"  evidence: {e}" for e in v.evidence)
         return "\n".join(lines)
 
 
@@ -36,6 +40,7 @@ class Outcome(str, Enum):
     ESCALATED_PLAN = "escalated_plan"        # council never approved the plan
     ESCALATED_REVIEW = "escalated_review"    # council never approved the diff
     BLOCKED = "blocked"                      # dependency failed or couldn't be integrated
+    BUDGET_EXCEEDED = "budget_exceeded"      # hard cost ceiling tripped (fail closed)
     FAILED = "failed"                        # agent error / no changes produced
 
 

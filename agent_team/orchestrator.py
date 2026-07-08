@@ -9,6 +9,7 @@ from pathlib import Path
 from .backlog import load_backlog
 from .decomposer import decompose
 from .models import Outcome, Ticket, TicketResult
+from .runner import Budget
 from .worker import run_ticket
 
 log = logging.getLogger("orchestrator")
@@ -44,13 +45,13 @@ class FileLocks:
             self._cond.notify_all()
 
 
-async def _load_tickets(cfg: dict) -> list[Ticket]:
+async def _load_tickets(cfg: dict, run_budget: Budget) -> list[Ticket]:
     backlog_cfg = cfg.get("backlog") or {}
     # Autonomous goal mode is the default: no backlog config needed, just goal.md.
     if backlog_cfg.get("source", "goal") == "goal":
         goal = Path(backlog_cfg.get("goal_file", "goal.md")).read_text()
         log.info("goal mode: decomposing goal into tickets")
-        tickets = await decompose(cfg, goal)
+        tickets = await decompose(cfg, goal, run_budget=run_budget)
         for t in tickets:
             deps = f" (depends on {', '.join(t.depends_on)})" if t.depends_on else ""
             log.info("  %s: %s%s", t.id, t.title, deps)
@@ -59,7 +60,10 @@ async def _load_tickets(cfg: dict) -> list[Ticket]:
 
 
 async def run(cfg: dict) -> list[TicketResult]:
-    tickets = await _load_tickets(cfg)
+    budget_cfg = cfg.get("budget") or {}
+    run_budget = Budget(budget_cfg.get("per_run_usd"), "run")
+
+    tickets = await _load_tickets(cfg, run_budget)
     log.info("backlog ready: %d ticket(s)", len(tickets))
 
     locks = FileLocks()
@@ -83,7 +87,8 @@ async def run(cfg: dict) -> list[TicketResult]:
         async with semaphore:
             log.info("[%s] worker started: %s", ticket.id, ticket.title)
             try:
-                result = await run_ticket(ticket, cfg, locks, dep_branches)
+                result = await run_ticket(ticket, cfg, locks, dep_branches,
+                                          run_budget=run_budget)
             except Exception as exc:  # a crashed worker must not sink the run
                 log.exception("[%s] worker crashed", ticket.id)
                 result = TicketResult(ticket, Outcome.FAILED, detail=str(exc))
@@ -95,6 +100,8 @@ async def run(cfg: dict) -> list[TicketResult]:
     ready.set()
 
     results = list(await asyncio.gather(*tasks.values()))
+    log.info("run spend: $%.2f%s", run_budget.spent,
+             f" of ${run_budget.limit:.2f} cap" if run_budget.limit else "")
     _report(results)
     return results
 
