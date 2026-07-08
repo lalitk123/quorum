@@ -27,11 +27,15 @@ research questions organize the work:
   CUSUM raises a self-alarm, with the drift onset index, when a seat starts
   approving known-bad diffs. See Done.)*
 
-The enabler for all three is a **free labeled-data engine**: gold cases,
-canaries, and mutants are defective *by construction*, so every seat verdict on
-them is a labeled reliability datapoint — no human labeling required. The honest
-scope: on a tiny corpus these estimates have wide intervals; the contribution is
-the methodology + infrastructure, with results that sharpen as the log grows.
+The enabler for all three is a **free labeled-data engine** (`mutation.py`): gold
+cases, canaries, and mutants are defective *by construction*, so every seat
+verdict on them is a labeled reliability datapoint — no human labeling required.
+Single-site mutants (`if authenticated:` → `if True:`, `==` → `!=`, ...) generate
+labeled-bad diffs in bulk, giving RQ2 the per-cell data volume it needs, and
+yield a **mutation score** — the fraction of injected faults the council kills —
+as a review-quality metric stronger than "the seats agreed." The honest scope: on
+a tiny corpus these estimates have wide intervals; the contribution is the
+methodology + infrastructure, with results that sharpen as the log grows.
 
 ## Done
 

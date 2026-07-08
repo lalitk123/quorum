@@ -44,6 +44,16 @@ def main() -> None:
         help="Run CUSUM drift detection over each seat's canary outcomes and exit "
              "non-zero if any seat is degrading. Defaults to reliability.log_file.",
     )
+    parser.add_argument(
+        "--mutants", default=None, metavar="FILE_OR_DIR",
+        help="Generate single-site mutants under the path and score how many the "
+             "council kills (mutation-based review evaluation; grows the labeled "
+             "judgment corpus).",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None,
+        help="Cap the number of mutants evaluated (with --mutants).",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -79,6 +89,11 @@ def main() -> None:
             "log_file", ".agent_team/judgments.jsonl")
         model = reliability.estimate_reliability(judgments.load_judgments(path))
         print(reliability.format_reliability(model))
+        return
+
+    if args.mutants is not None:
+        from agent_team.mutation import run_mutation_eval
+        asyncio.run(run_mutation_eval(cfg, args.mutants, limit=args.limit))
         return
 
     if args.drift is not None:
