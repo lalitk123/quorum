@@ -20,20 +20,23 @@ benchmarks of its own quality.
   edits, deleted assertions, new skip markers) feeding the reviewers.
 - **Hard budget caps** (per-ticket / per-run USD, from real per-session API
   cost) tripping fail-closed to escalation with preserved worktrees.
-- **Per-seat model routing** (`council_models`) — weak-form jury diversity
-  within Claude tiers.
+- **Heterogeneous jury.** Pluggable reviewer backends (`agent_team/reviewers.py`):
+  a `claude` backend with live file tools (default) and an `openai` backend for
+  any OpenAI-compatible endpoint — GPT / Gemini / DeepSeek / Qwen directly or
+  via OpenRouter, no new dependencies. Seats routed per-config decorrelate
+  errors across model families (PoLL, arXiv 2404.18796). Cross-family spend
+  folds into the USD budget when per-Mtok prices are declared.
 - **Escalation reports**: ESCALATION.md root-cause file (rejecting verdicts +
   evidence) written into every preserved worktree.
+- **Unit test suite** (`tests/`, `pytest -q`) covering the deterministic
+  fail-closed logic: budget breaker, tamper scan, verdict parsing, evidence
+  fail-closed rule, seat routing, decomposer DAG validation.
 - Goal → council-approved DAG decomposition; dependency-aware scheduling;
   stacked PRs; file-overlap locks; human-only merge.
 
 ## Next: reliability
 
-- **Heterogeneous jury (highest priority).** Pluggable reviewer backends so
-  seats can run on disjoint model families (GPT, Gemini, open-weight) — LLM
-  errors are 60%+ correlated within a family; disjoint-family panels beat a
-  single large judge at ~1/7 the cost (PoLL, arXiv 2404.18796).
-- **Calibration gold set.** 30–200 labeled diffs (seeded defects + known-good)
+- **Calibration gold set (now highest priority).** 30–200 labeled diffs (seeded defects + known-good)
   from the real distribution; measure per-seat precision/recall, κ vs human
   labels, swap-consistency; tune the aggregation thresholds empirically and
   weight seats by measured calibration rather than equally.

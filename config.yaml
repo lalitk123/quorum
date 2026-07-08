@@ -13,12 +13,29 @@ push_approval: unanimous       # majority | unanimous
 worker_model: opus
 council_model: sonnet
 
-# Optional per-seat model routing for the council (seats: architect, security,
-# qa, product, adversary). Diversifying seats decorrelates reviewer errors —
-# weak-form within Claude tiers today; cross-provider seats are on the roadmap.
+# Per-seat routing for the council (seats: architect, security, qa, product,
+# adversary). A heterogeneous jury of disjoint model families decorrelates
+# reviewer errors — the highest-leverage reliability lever. Each seat value is
+# either a bare Claude model string, or a backend spec.
 council_models: {}
+#  # A different Claude tier (weak-form diversity):
 #  adversary: opus
-#  security: opus
+#  # A cross-family seat via any OpenAI-compatible endpoint. `api_key_env` names
+#  # the env var holding the key. Give per-Mtok prices to fold its spend into
+#  # the USD budget caps; omit them and the seat contributes 0 to the budget.
+#  security:
+#    backend: openai
+#    model: openai/gpt-5.1              # or a bare model id for direct OpenAI
+#    base_url: https://openrouter.ai/api/v1
+#    api_key_env: OPENROUTER_API_KEY
+#    temperature: 0.2
+#    input_price_per_mtok: 2.5
+#    output_price_per_mtok: 10.0
+#  qa:
+#    backend: openai
+#    model: google/gemini-3-pro
+#    base_url: https://openrouter.ai/api/v1
+#    api_key_env: OPENROUTER_API_KEY
 
 # Deterministic gate: commands that must exit 0 in the worktree before the
 # council reviews a diff. Failures are fed straight back to the worker.

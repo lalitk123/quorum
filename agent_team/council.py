@@ -14,10 +14,9 @@ against "optimistic verdicts" that approve without inspecting anything.
 
 import asyncio
 
-from claude_agent_sdk import ClaudeAgentOptions
-
 from .models import CouncilDecision, Verdict
-from .runner import AgentRunError, Budget, extract_json_block, run_agent
+from .reviewers import SeatSpec, resolve_seat, run_reviewer
+from .runner import AgentRunError, Budget, extract_json_block
 
 REVIEWERS: dict[str, str] = {
     "architect": (
@@ -51,12 +50,20 @@ REVIEWERS: dict[str, str] = {
     ),
 }
 
-VERDICT_INSTRUCTIONS = (
-    "\n\nYou may read files in the working directory to inform your judgment. "
+_EVIDENCE_WITH_TOOLS = (
+    "You may read files in the working directory to inform your judgment. "
     "Ground every claim in evidence: cite the specific files (with line numbers "
-    "where possible) you actually inspected. Before finalizing, attempt to "
-    "DISPROVE your own conclusion — re-read the cited code and drop any finding "
-    "that does not survive scrutiny; report only findings that do.\n"
+    "where possible) you actually inspected."
+)
+_EVIDENCE_NO_TOOLS = (
+    "You do not have file access — judge from the diff and plan provided above. "
+    "Ground every claim in evidence: cite file:line references drawn from the "
+    "diff for anything you flag or verify."
+)
+_VERDICT_TAIL = (
+    " Before finalizing, attempt to DISPROVE your own conclusion — re-read the "
+    "cited code and drop any finding that does not survive scrutiny; report only "
+    "findings that do.\n"
     "End your response with exactly one JSON object:\n"
     '{"verdict": "approve" | "reject", "reasoning": "<one or two sentences>", '
     '"evidence": ["path/to/file.py:42 — what you verified or found there"]}\n'
@@ -66,21 +73,18 @@ VERDICT_INSTRUCTIONS = (
 )
 
 
+def _verdict_instructions(has_file_tools: bool) -> str:
+    lead = _EVIDENCE_WITH_TOOLS if has_file_tools else _EVIDENCE_NO_TOOLS
+    return "\n\n" + lead + _VERDICT_TAIL
+
+
 async def _review_one(
-    name: str, persona: str, material: str, cwd: str, model: str,
+    name: str, persona: str, material: str, cwd: str, spec: SeatSpec,
     budgets: tuple[Budget, ...],
 ) -> Verdict:
-    options = ClaudeAgentOptions(
-        system_prompt=persona + VERDICT_INSTRUCTIONS,
-        allowed_tools=["Read", "Grep", "Glob"],
-        permission_mode="dontAsk",
-        cwd=cwd,
-        model=model,
-        max_turns=20,
-        setting_sources=[],
-    )
+    system_prompt = persona + _verdict_instructions(spec.has_file_tools)
     try:
-        text = await run_agent(material, options, budgets=budgets)
+        text = await run_reviewer(spec, system_prompt, material, cwd, budgets)
     except AgentRunError as exc:
         return Verdict(reviewer=name, approve=False, reasoning=f"reviewer errored: {exc}")
 
@@ -106,17 +110,18 @@ async def _review_one(
 
 
 async def convene(material: str, cwd: str, model: str, rule: str,
-                  models: dict[str, str] | None = None,
+                  models: dict[str, object] | None = None,
                   budgets: tuple[Budget, ...] = ()) -> CouncilDecision:
     """Run all reviewers in parallel and aggregate under the given rule.
 
-    `models` optionally routes individual seats to different models — weak-form
-    jury diversity today (Claude tiers); cross-provider seats are on the roadmap.
+    `models` optionally routes individual seats to different backends/models
+    for a heterogeneous jury: a bare Claude model string, or a full backend
+    spec (e.g. an OpenAI-compatible model). See `reviewers.resolve_seat`.
     """
-    seat_models = models or {}
+    seat_config = models or {}
     verdicts = await asyncio.gather(*(
         _review_one(name, persona, material, cwd,
-                    seat_models.get(name, model), budgets)
+                    resolve_seat(seat_config.get(name), model), budgets)
         for name, persona in REVIEWERS.items()
     ))
     approvals = sum(v.approve for v in verdicts)

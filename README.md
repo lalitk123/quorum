@@ -30,10 +30,21 @@ backlog ──> worker: draft plan (read-only)
         (never straight to main; merge stays human)
 ```
 
-The council — architect, security, QA, product/scope — runs as four
-**parallel, independent, read-only agent sessions**; each returns a JSON
-verdict and the aggregation rule is plain code. Unparseable or errored
-reviews count as rejections (fail closed).
+The council — architect, security, QA, product/scope, and a red-team
+adversary — runs as five **parallel, independent, read-only agent sessions**;
+each cites file:line evidence, runs a self-falsification pass, and returns a
+JSON verdict aggregated in plain code. Unparseable reviews, errored reviews,
+and approvals with no cited evidence all count as rejections (fail closed).
+
+Seats can run on **different model families** for a heterogeneous jury (the
+highest-leverage reliability lever): each seat is a bare Claude model or an
+OpenAI-compatible backend spec (GPT / Gemini / DeepSeek / Qwen, directly or
+via OpenRouter). See `council_models` in `config.yaml`.
+
+A **deterministic gate** runs before the diff council: configured test/linter
+commands must pass in the worktree, and a tamper scan flags gamed tests
+(deleted assertions, skip markers, CI edits). Hard per-ticket and per-run USD
+budget caps trip fail-closed to escalation.
 
 ## Setup
 
@@ -65,6 +76,12 @@ python main.py --config config.yaml
 To feed hand-written tickets or GitHub issues instead, set `backlog.source`
 to `file` or `github` in `config.yaml`.
 
+Run the unit tests for the deterministic fail-closed logic:
+
+```bash
+pytest -q
+```
+
 `dry_run: true` (the default) stops after council approval: the branch and
 worktree exist locally under `<repo>/.worktrees/`, nothing is pushed. Flip it
 to `false` to let approved workers push and open PRs.
@@ -94,7 +111,9 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/decomposer.py` | Goal → council-approved ticket backlog (goal mode) |
 | `agent_team/orchestrator.py` | Parallel scheduling, file-overlap locks, summary |
 | `agent_team/worker.py` | Per-ticket lifecycle: plan → review → implement → review → PR |
-| `agent_team/council.py` | The four reviewer personas + vote aggregation |
+| `agent_team/council.py` | The five reviewer personas + vote aggregation |
+| `agent_team/reviewers.py` | Pluggable reviewer backends (Claude + OpenAI-compatible) |
+| `agent_team/checks.py` | Deterministic test/linter gate + diff tamper scan |
 | `agent_team/workspace.py` | Git worktrees, commits, diffs, push/PR (deterministic code) |
 | `agent_team/backlog.py` | tasks.yaml or GitHub Issues backlog |
 | `agent_team/runner.py` | Thin `query()` wrapper + JSON extraction |
