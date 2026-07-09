@@ -174,7 +174,9 @@ overconfident, and make the selector believe a near-clone bought fresh coverage,
 so it recommends a council that is **too small**.
 
 Since every seat reviews every case, the judgment log already contains the full
-**joint** outcome distribution — the approximation was never necessary:
+**joint** outcome distribution — the approximation was never necessary. The run
+below is *illustrative*, on a synthetic 60-case log with a deliberately planted
+clone pair; real numbers require a real corpus:
 
 ```console
 $ python main.py --independence
