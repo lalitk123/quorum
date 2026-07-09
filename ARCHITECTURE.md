@@ -1,7 +1,5 @@
 # Quorum — Architecture Plan
 
-*(repo slug: `multi-agent-threading`; product name: **Quorum**)*
-
 ## Goal
 
 Replace a human engineering team with AI agents that work as independent

@@ -159,15 +159,24 @@ def estimate_reliability(judgments, prior_a: float = 0.5, prior_b: float = 0.5,
 def posterior_defect_prob(votes, model: dict[str, SeatReliability],
                           base_rate: float = 0.5, conservative: bool = False,
                           default_sens: float = 0.5, default_spec: float = 0.5,
-                          eps: float = 1e-3) -> float:
+                          eps: float = 1e-3, discount: float = 1.0) -> float:
     """P(defect | votes), combining seats as conditionally-independent sensors.
 
     `votes` is an iterable of (seat, is_reject). Seats absent from the model use
     the uninformative default (0.5/0.5 → a likelihood ratio of 1, i.e. no
     influence). `conservative=True` uses each seat's *lower* credible bound —
     a fail-closed posture that refuses to over-trust a thinly-evidenced seat.
+
+    `discount` ∈ (0, 1] scales the total log-likelihood-ratio evidence, correcting
+    the independence assumption when seats are correlated (see
+    `independence.correlation_discount`, which derives it from the measured mean
+    pairwise φ via a Kish design effect). At the default 1.0 the seats are taken as
+    independent and this is the plain Bayes update. Below 1.0 the panel's evidence
+    is worth fewer independent votes, so the posterior is pulled back toward the
+    base rate rather than being stacked up by near-duplicate reviewers.
     """
     log_odds = math.log(base_rate / (1 - base_rate))
+    evidence = 0.0
     for seat, is_reject in votes:
         r = model.get(seat)
         if r is None:
@@ -179,14 +188,17 @@ def posterior_defect_prob(votes, model: dict[str, SeatReliability],
         s = min(max(s, eps), 1 - eps)
         t = min(max(t, eps), 1 - eps)
         lr = s / (1 - t) if is_reject else (1 - s) / t
-        log_odds += math.log(lr)
+        evidence += math.log(lr)
+    log_odds += min(max(discount, 0.0), 1.0) * evidence
     odds = math.exp(log_odds)
     return odds / (1 + odds)
 
 
-def trust_score(votes, model, base_rate: float = 0.5, conservative: bool = False) -> float:
+def trust_score(votes, model, base_rate: float = 0.5, conservative: bool = False,
+                discount: float = 1.0) -> float:
     """P(the change is correct) = 1 - P(defect | votes)."""
-    return 1.0 - posterior_defect_prob(votes, model, base_rate, conservative)
+    return 1.0 - posterior_defect_prob(votes, model, base_rate, conservative,
+                                       discount=discount)
 
 
 def format_reliability(model: dict[str, SeatReliability]) -> str:

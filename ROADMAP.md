@@ -28,6 +28,16 @@ research questions organize the work:
   CUSUM raises a self-alarm, with the drift onset index, when a seat starts
   approving known-bad diffs. See Done.)*
 
+RQ1 and RQ2 both leaned on an unexamined premise — that seats err *independently*.
+Auditing it (`independence.py`) is this project's own thesis turned on itself: the
+jury is **designed** to decorrelate, but design intent is not measurement, and the
+assumption fails in the unsafe direction (an overconfident posterior; a council
+sized too small). Because every seat reviews every case, the judgment log already
+holds the full joint outcome distribution — so both formulas can be replaced by
+direct measurement instead of corrected by assumption. The headline result: the
+independence gap is negligible at the full council, where detection saturates, and
+large on exactly the small subsets the reviewer selector evaluates.
+
 The enabler for all three is a **free labeled-data engine** (`mutation.py`): gold
 cases, canaries, and mutants are defective *by construction*, so every seat
 verdict on them is a labeled reliability datapoint — no human labeling required.
@@ -123,77 +133,47 @@ methodology + infrastructure, with results that sharpen as the log grows.
   the PR body, and the run summary. This is the concrete "AI software *assurance*
   layer" (idea #10): the worker is interchangeable; the measurable trust verdict
   is the product. Deterministic, unit-tested.
-- Goal → council-approved DAG decomposition; dependency-aware scheduling;
-  stacked PRs; file-overlap locks; human-only merge.
-
-## Next: reliability
-
-- **Chance-corrected quality measures** (`bench.py`). The benchmark now reports
-  Cohen's **κ vs the human gold label** (per seat and for the whole gate — so a
-  mostly-approve gate on a mostly-good corpus can't fake a high score the way raw
-  accuracy would) and **inter-seat κ** (mean pairwise agreement — the direct
-  health check on the heterogeneous jury: low κ = decorrelated seats = the design
-  is working; high κ = redundant seats). Deterministic, unit-tested. These are
-  the numbers to tune seat routing and aggregation thresholds against.
-- **Grow the gold set + tune from it.** The measurement harness exists; now grow
-  the corpus toward 30–200 labeled diffs from the real distribution, add
-  repeat-run stability (verdict flip-rate under resampling), and use the per-seat
-  κ / detection numbers to weight or re-route seats and set aggregation
-  thresholds empirically rather than by intuition.
-- **Baseline-relative canary alerting.** Canaries alert today on absolute
-  thresholds (gate approval, dissent floor). Record a per-seat baseline from the
-  gold sweep so a canary can flag a *seat-specific* dissent collapse (a seat that
-  used to catch this case and now doesn't), not just a panel-wide one.
-- **Deeper mutation coverage.** The teeth check ships today as a single
-  source-revert; extend toward per-file mutation and coverage deltas so a
-  partially-tested change is scored, not just pass/fail.
-
-## Next: scale
-
-- **Early-exit voting** (`early_exit_voting`, worker gates only). Reviewer
-  sessions still in flight are cancelled the instant the outcome is forced — a
-  single reject on the unanimous pre-push gate, or a reached majority on the plan
-  gate — saving their tokens. Implemented *losslessly*: `_outcome_decided` only
-  short-circuits a verdict the full panel would reach anyway, so it needs no
-  calibration; the trade is fewer collected objections per rejected round.
-  Deterministic and unit-tested (decision table + a cancellation test). A more
-  aggressive, calibration-gated variant (exit on a *predicted* outcome before it
-  is mathematically forced) remains future work.
-- Structured context objects between phases instead of full plan/diff text
-  where possible; targeted retrieval for reviewers on large repos.
-- Persist decomposer plan + per-ticket state to external memory for very
-  large runs; scale reviewer depth with diff size (light pass on small diffs).
-- Tune worker concurrency to human merge throughput (practical ceiling is
-  review, not compute: ~4–8 concurrent worktrees).
-
-## Next: autonomy
-
+- **Chance-corrected quality measures** (`bench.py`). The benchmark reports Cohen's
+  **κ vs the gold label** (per seat and for the whole gate — so a mostly-approve
+  gate on a mostly-good corpus can't fake a high score the way raw accuracy would)
+  and **inter-seat κ** (mean pairwise agreement — the health check on the
+  heterogeneous jury: low κ = decorrelated seats = the design is working).
 - **Graduated review strictness by risk** (`agent_team/risk.py`). A deterministic
   classifier scores each change's blast radius from its files and added content;
   the gate adapts without ever weakening: **HIGH** (auth / secrets / crypto / DB
   migrations / CI-CD / infra / payment) is forced to the strictest unanimous gate
   and flagged permanent human-merge; **LOW** (docs, lockfiles) still clears the
   full council but is marked safe to fast-track a *human* merge; **MEDIUM** keeps
-  the configured gate. The risk level and (always human) merge disposition ride
-  in the signed receipt, the PR body, and the run summary. Because human merge is
+  the configured gate. Risk level and (always human) merge disposition ride in the
+  signed receipt, the PR body, and the run summary. Because human merge is
   permanent here, the "tiers" govern strictness and recommendation — never
   auto-merge. Biased toward HIGH (a false HIGH only adds scrutiny). Unit-tested.
 - **Adaptive reviewer selection** (RQ2: `agent_team/selection.py`,
   `python main.py --select`). From the measured reliability model, greedily builds
   the minimum-cost council that reaches a target defect-detection probability,
-  under the independence model `P(detect) = 1 - Π(1 - sensitivityᵢ)`, adding the
-  seat with the best marginal detection-per-dollar each step. Condition-sliceable
-  (`for_condition`) so a security-heavy diff pulls the seats that have measurably
-  caught security defects. The greedy trail is an auditable record of each choice.
-  Unit-tested, including the cost-aware case where two cheap-but-good seats beat
-  one expensive star.
-- Promote from a clean track record: mine the receipt log so a class with a long
-  clean history can be recommended for lighter *human* ceremony — still never
-  auto-merged (auth/migrations/security stay strictest forever).
-- **Daemon mode**: long-lived service watching the backlog, maintaining the
-  DAG, dispatching as dependencies clear, governed by merge throughput.
-- Bounded self-repair on escalation (auto-decompose repeatedly-failing
-  tickets) — partial today via revision rounds + ESCALATION.md.
+  adding the seat with the best marginal detection-per-dollar each step, and
+  scoring each candidate subset against its **measured joint** detection rather
+  than a product of marginals (see the independence audit below).
+  Condition-sliceable (`for_condition`) so a security-heavy diff pulls the seats
+  that have measurably caught security defects. The greedy trail records which
+  estimator decided each step — an auditable record of why each seat was chosen.
+- **Independence audit** (`agent_team/independence.py`, `python main.py --independence`).
+  The council's two core formulas — the Bayesian posterior `Π LRᵢ` and the
+  selector's `1 - Π(1 - sᵢ)` — both assume seats err *independently*. That is the
+  jury's design intent, not a measurement, and it fails in the **unsafe** direction:
+  correlated seats make the posterior overconfident and make the selector believe a
+  near-clone bought fresh coverage, so it ships a council that is too small. Since
+  every seat reviews every case, the judgment log already holds the full **joint**
+  distribution, so the approximation was never needed. This module measures joint
+  detection directly (Beta credible interval), reports the predicted-minus-measured
+  **inflation**, per-pair **φ** and blind-spot overlap, and the decision-relevant
+  `P(seat b catches | seat a missed)`. `selection` now consumes the measured joint
+  by default; `reliability.posterior_defect_prob` accepts a Kish design-effect
+  `discount` that shrinks a correlated panel's evidence to its *effective* number of
+  independent seats (two perfect clones rejecting now persuade exactly as much as
+  one seat, not twice as much). Empirically the gap is nearly invisible at the full
+  five-seat council (detection saturates) and severe on the small subsets the
+  selector actually evaluates — which is precisely where it does damage.
 - **Automatic reviewer evolution** (`agent_team/evolution.py`,
   `python main.py --evolve`). Because the judgment log records which *model*
   produced each verdict, models are compared head-to-head per seat on the same
@@ -210,8 +190,57 @@ methodology + infrastructure, with results that sharpen as the log grows.
   with a graph of claims — statement, file:line evidence, stance, and the
   strongest *counterargument* to itself — normalized fail-closed and rendered into
   the escalation report and PR notes, so an approval is a walkable structure, not
-  a rubber stamp. Unit-tested schema/parser/renderer; the council prompt invites
-  the graph for any non-trivial finding.
+  a rubber stamp. Unit-tested schema/parser/renderer.
+- **Early-exit voting** (`early_exit_voting`, worker gates only). Reviewer sessions
+  still in flight are cancelled the instant the outcome is forced — a single reject
+  on the unanimous pre-push gate, or a reached majority on the plan gate — saving
+  their tokens. Implemented *losslessly*: `_outcome_decided` only short-circuits a
+  verdict the full panel would reach anyway, so it needs no calibration; the trade
+  is fewer collected objections per rejected round. Deterministic, unit-tested.
+- Goal → council-approved DAG decomposition; dependency-aware scheduling;
+  stacked PRs; file-overlap locks; human-only merge.
+
+## Next: reliability
+
+- **Grow the gold set + tune from it.** The measurement harness exists; now grow
+  the corpus toward 30–200 labeled diffs from the real distribution, add
+  repeat-run stability (verdict flip-rate under resampling — a seat cannot be more
+  *accurate* than it is self-*consistent*, and we do not yet measure the ceiling),
+  and use the per-seat κ / detection numbers to weight or re-route seats and set
+  aggregation thresholds empirically rather than by intuition.
+- **Baseline-relative canary alerting.** Canaries alert today on absolute
+  thresholds (gate approval, dissent floor). Record a per-seat baseline from the
+  gold sweep so a canary can flag a *seat-specific* dissent collapse (a seat that
+  used to catch this case and now doesn't), not just a panel-wide one.
+- **Deeper mutation coverage.** The teeth check ships today as a single
+  source-revert; extend toward per-file mutation and coverage deltas so a
+  partially-tested change is scored, not just pass/fail. Per-operator mutation
+  scores would also give RQ2 the bug-type conditioning it currently has to be
+  told rather than learn.
+- **Conditional independence, not just marginal.** The audit measures φ pooled over
+  all defects. Two seats can look decorrelated overall while failing together on
+  exactly the defect class that matters (auth bugs). Slice φ by `condition`.
+
+## Next: scale
+
+- Structured context objects between phases instead of full plan/diff text
+  where possible; targeted retrieval for reviewers on large repos.
+- Persist decomposer plan + per-ticket state to external memory for very
+  large runs; scale reviewer depth with diff size (light pass on small diffs).
+- Tune worker concurrency to human merge throughput (practical ceiling is
+  review, not compute: ~4–8 concurrent worktrees).
+- A more aggressive, calibration-gated early-exit variant (exit on a *predicted*
+  outcome before it is mathematically forced) remains future work.
+
+## Next: autonomy
+
+- Promote from a clean track record: mine the receipt log so a class with a long
+  clean history can be recommended for lighter *human* ceremony — still never
+  auto-merged (auth/migrations/security stay strictest forever).
+- **Daemon mode**: long-lived service watching the backlog, maintaining the
+  DAG, dispatching as dependencies clear, governed by merge throughput.
+- Bounded self-repair on escalation (auto-decompose repeatedly-failing
+  tickets) — partial today via revision rounds + ESCALATION.md.
 - Self-improvement of reviewer prompts/decomposer heuristics gated on the
   gold-set regression eval only (spec + regression oracle, never a raw metric).
 

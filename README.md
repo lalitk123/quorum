@@ -17,8 +17,6 @@ organized around three questions: can we measure reviewer reliability (RQ1),
 adaptively pick reviewers per dollar (RQ2), and detect reviewer drift
 automatically (RQ3)?
 
-> The git repository slug is `multi-agent-threading`; **Quorum** is the product name.
-
 ## How a ticket flows
 
 ```
@@ -165,6 +163,54 @@ thinly-evidenced reviewers. The math is dependency-free and unit-tested against
 hand-computed probabilities. *(This is RQ1; RQ2 conditions these estimates on the
 change to pick reviewers per dollar, RQ3 tracks them over time for drift.)*
 
+## Do the reviewers actually disagree? (independence audit)
+
+Both of the formulas above assume seats err **independently** — the Bayesian
+posterior multiplies their likelihood ratios, and the reviewer selector computes
+`P(detect) = 1 - Π(1 - sensitivityᵢ)`. A heterogeneous jury is *designed* for that
+independence, but designing for something is not measuring it, and the assumption
+fails in the direction that hurts: correlated seats make the posterior
+overconfident, and make the selector believe a near-clone bought fresh coverage,
+so it recommends a council that is **too small**.
+
+Since every seat reviews every case, the judgment log already contains the full
+**joint** outcome distribution — the approximation was never necessary:
+
+```console
+$ python main.py --independence
+=== Independence audit (is the jury really decorrelated?) ===
+  full council ['adversary', 'architect', 'product', 'qa', 'security']
+    independence model predicts P(detect) = 98.8%
+    measured from the joint          = 97.5% (90% CI lower bound 93.7%, n=60)
+    inflation (predicted - measured) = +1.3%   <-- independence holds well
+
+  mean pairwise φ = 0.12   design effect = 1.50
+  5 seats are worth 3.3 independent ones (evidence discount 0.67)
+
+  pair                     φ    joint-miss (obs vs indep)   P(b catches | a misses)
+  architect + product    +0.83    53% vs 33% (!)           9%
+  adversary + security   +0.23    12% vs 7%               59%
+  ...
+  adversary + product    -0.42    7% vs 16%               76%
+```
+
+Read that bottom table, not the top line. `architect + product` miss the same
+defects (φ = +0.83) and share a blind spot 53% of the time where independence
+predicts 33% — and when `architect` misses a defect, `product` catches it only
+**9%** of the time. It does not cover for it. Meanwhile `adversary + product` are
+genuinely complementary (φ = −0.42).
+
+The full-council inflation looks harmless (+1.3%) only because five-seat detection
+saturates near 100%. On the *subsets the selector actually evaluates* the same data
+gives `architect + product`: **predicted 67.1%, measured 46.7% — a +20.4% overstatement.**
+The error hides exactly where it does damage. So `selection.py` now scores each
+candidate subset against its measured joint detection, and
+`reliability.posterior_defect_prob` takes a Kish design-effect `discount` that
+shrinks a correlated panel's evidence to its *effective* number of independent
+seats — two perfect clones rejecting now persuade exactly as much as one seat, not
+twice as much. Where joint data is too thin, it falls back to the independence
+product and labels the step as such rather than pretending.
+
 ## Verify the verifier (canary diffs)
 
 A benchmark measures the gate once; a live gate can still drift into a rubber
@@ -282,6 +328,7 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/drift.py` | Continuous reviewer-drift detection via CUSUM (RQ3) |
 | `agent_team/mutation.py` | Mutation-based review evaluation + free labeled-data engine (#7) |
 | `agent_team/selection.py` | Adaptive min-cost reviewer selection per dollar (RQ2) |
+| `agent_team/independence.py` | Audits the independence assumption; measured joint detection |
 | `agent_team/trust.py` | Formal trust score composing all assurance signals (#8/#10) |
 | `agent_team/evolution.py` | Per-seat model comparison + swap recommendations (#6) |
 | `agent_team/corpus.py` | Self-benchmarking corpus size + statistical-power report (#9) |

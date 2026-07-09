@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 
 from claude_agent_sdk import ClaudeAgentOptions
 
-from . import council, evidence, judgments, receipts, reliability, risk, sandbox, trust
+from . import (council, evidence, independence, judgments, receipts, reliability,
+               risk, sandbox, trust)
 from .checks import run_checks, tamper_scan
 from .models import CouncilDecision, Outcome, Ticket, TicketResult
 from .runner import AgentRunError, Budget, BudgetExceeded, extract_json_block, run_agent
@@ -54,10 +55,16 @@ def _build_trust(cfg: dict, decision: CouncilDecision, assessment, checks_passed
     try:
         log_file = (cfg.get("reliability") or {}).get("log_file")
         if log_file:
-            model = reliability.estimate_reliability(judgments.load_judgments(log_file))
+            rows = judgments.load_judgments(log_file)
+            model = reliability.estimate_reliability(rows)
             if model:
                 votes = [(v.reviewer, not v.approve) for v in decision.verdicts]
-                posterior_correct = 1.0 - reliability.posterior_defect_prob(votes, model)
+                # Seats that miss the same defects are not independent evidence; discount
+                # their combined weight to the effective number of independent reviewers.
+                discount = independence.correlation_discount(
+                    rows, [v.reviewer for v in decision.verdicts])
+                posterior_correct = 1.0 - reliability.posterior_defect_prob(
+                    votes, model, discount=discount)
                 ns = [model[v.reviewer].n_defect for v in decision.verdicts
                       if v.reviewer in model]
                 evidence_n = sum(ns) / len(ns) if ns else None

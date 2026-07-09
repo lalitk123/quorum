@@ -5,11 +5,19 @@ council is wasteful: some seats add little on some changes, and every seat costs
 tokens. RQ2 asks whether we can choose reviewers to **maximize defect recall per
 dollar**.
 
-Model the team as independent detectors of a defect (the heterogeneous jury is
-designed for exactly this independence). A subset's detection probability — the
-chance at least one seat catches a real defect — is
+A subset's detection probability is the chance at least one of its seats catches a
+real defect. If seats erred independently that would be
 
     P(detect) = 1 - Π_i (1 - sensitivity_i).
+
+The heterogeneous jury is *designed* for that independence, but design intent is
+not measurement, and the formula fails unsafely when it is wrong: two seats that
+miss the same defects look additive, so the greedy hits its target early and
+returns a council that is too small. So by default we do not assume it — every
+seat reviews every case, so `independence.make_empirical_detector` reads each
+candidate subset's **measured** joint detection straight out of the judgment log,
+and the product of marginals is used only as a fallback where joint data is thin.
+`--independence` reports how far apart the two estimators actually are.
 
 We greedily add the seat with the best *marginal detection per dollar* until a
 target detection is met (or a budget is exhausted). Condition the reliability
@@ -55,8 +63,17 @@ def team_detection(seats, model: dict[str, SeatReliability],
 
 def select_reviewers(model: dict[str, SeatReliability], costs: dict[str, float] | None = None,
                      target_detection: float = 0.95, budget: float | None = None,
-                     default_cost: float = 1.0, conservative: bool = False) -> Selection:
-    """Greedy min-cost council reaching `target_detection` (or best under `budget`)."""
+                     default_cost: float = 1.0, conservative: bool = False,
+                     joint=None) -> Selection:
+    """Greedy min-cost council reaching `target_detection` (or best under `budget`).
+
+    `joint` is an optional `seats -> detection | None` callable (see
+    `independence.make_empirical_detector`). When supplied and it has data for a
+    candidate subset, its **measured** joint detection replaces the independence
+    product — so two seats that miss the same defects stop looking additive. It
+    returns `None` for subsets with too little joint data, and we fall back to the
+    independence model for those, recording which estimator decided each step.
+    """
     costs = costs or {}
 
     def sens(s):
@@ -72,11 +89,19 @@ def select_reviewers(model: dict[str, SeatReliability], costs: dict[str, float] 
             c = costs.get(s, default_cost) or default_cost
             if budget is not None and cost + c > budget + 1e-9:
                 continue
-            new_det = 1.0 - (1.0 - detection) * (1.0 - sens(s))
+            new_det, source = None, "measured"
+            if joint is not None:
+                new_det = joint(chosen + [s])
+            if new_det is None:
+                new_det = 1.0 - (1.0 - detection) * (1.0 - sens(s))
+                source = "independence"
+            # True P(at least one catches) is monotone in the subset; any dip is
+            # estimation noise from the shifting joint-case support.
+            new_det = max(new_det, detection)
             marginal = new_det - detection
             score = marginal / c
             if best is None or score > best["score"]:
-                best = {"seat": s, "cost": c, "new_det": new_det,
+                best = {"seat": s, "cost": c, "new_det": new_det, "source": source,
                         "marginal": marginal, "score": score}
         if best is None or best["marginal"] <= 1e-12:
             break                                     # nothing affordable/helpful left
@@ -84,7 +109,8 @@ def select_reviewers(model: dict[str, SeatReliability], costs: dict[str, float] 
         remaining.discard(best["seat"])
         detection, cost = best["new_det"], cost + best["cost"]
         steps.append({"seat": best["seat"], "detection": round(detection, 4),
-                      "marginal_per_dollar": round(best["score"], 4)})
+                      "marginal_per_dollar": round(best["score"], 4),
+                      "estimator": best["source"]})
     return Selection(chosen, detection, cost, steps)
 
 
@@ -105,17 +131,31 @@ def format_selection(sel: Selection, model: dict[str, SeatReliability]) -> str:
     lines.append(f"  selected: {', '.join(sel.seats)}")
     lines.append(f"  team detection P(catch defect) = {sel.detection:.1%}  "
                  f"at cost {sel.cost:g}")
-    lines.append("  greedy trail (seat: cumulative detection, marginal/$):")
+    lines.append("  greedy trail (seat: cumulative detection, marginal/$, estimator):")
     for st in sel.steps:
         lines.append(f"    + {st['seat']:<12} -> {st['detection']:.1%}  "
-                     f"({st['marginal_per_dollar']:.3f}/$)")
+                     f"({st['marginal_per_dollar']:.3f}/$)  [{st.get('estimator', 'independence')}]")
+    if any(st.get("estimator") == "independence" for st in sel.steps):
+        lines.append("  note: 'independence' steps assume seats miss defects independently — "
+                     "run `--independence` to see whether that holds.")
     return "\n".join(lines)
 
 
 def recommend_council(judgments, costs: dict[str, float] | None = None,
                       target_detection: float = 0.95, budget: float | None = None,
+                      empirical: bool = True, conservative: bool = False,
                       **conds) -> Selection:
-    """End-to-end: estimate reliability (optionally condition-sliced) then select."""
+    """End-to-end: estimate reliability (optionally condition-sliced) then select.
+
+    `empirical=True` (default) measures each candidate subset's joint detection from
+    the judgment log instead of assuming seats are independent, falling back to the
+    independence product only where joint data is too thin.
+    """
     rows = for_condition(judgments, **conds) if conds else list(judgments)
     model = estimate_reliability(rows)
-    return select_reviewers(model, costs, target_detection, budget)
+    joint = None
+    if empirical:
+        from .independence import make_empirical_detector
+        joint = make_empirical_detector(rows, conservative=conservative)
+    return select_reviewers(model, costs, target_detection, budget,
+                            conservative=conservative, joint=joint)

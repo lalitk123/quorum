@@ -69,6 +69,12 @@ def main() -> None:
         help="Report the judgment corpus size, sources, and statistical power. "
              "Defaults to reliability.log_file.",
     )
+    parser.add_argument(
+        "--independence", nargs="?", const="", default=None, metavar="JUDGMENT_LOG",
+        help="Audit the independence assumption behind the Bayesian council and the "
+             "selector: measured vs predicted joint detection, pairwise φ, blind-spot "
+             "overlap. Defaults to reliability.log_file.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -112,16 +118,25 @@ def main() -> None:
         return
 
     if args.select is not None:
-        from agent_team import judgments, reliability, selection
+        from agent_team import independence, judgments, reliability, selection
         sel_cfg = cfg.get("selection") or {}
         path = args.select or (cfg.get("reliability") or {}).get(
             "log_file", ".agent_team/judgments.jsonl")
-        model = reliability.estimate_reliability(judgments.load_judgments(path))
+        rows = judgments.load_judgments(path)
+        model = reliability.estimate_reliability(rows)
         sel = selection.select_reviewers(
             model, costs=sel_cfg.get("seat_costs") or {},
             target_detection=float(sel_cfg.get("target_detection", 0.95)),
-            budget=sel_cfg.get("budget"))
+            budget=sel_cfg.get("budget"),
+            joint=independence.make_empirical_detector(rows))
         print(selection.format_selection(sel, model))
+        return
+
+    if args.independence is not None:
+        from agent_team import independence, judgments
+        path = args.independence or (cfg.get("reliability") or {}).get(
+            "log_file", ".agent_team/judgments.jsonl")
+        print(independence.format_independence(judgments.load_judgments(path)))
         return
 
     if args.evolve is not None:
