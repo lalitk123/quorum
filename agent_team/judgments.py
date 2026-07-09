@@ -47,11 +47,28 @@ def append_judgments(log_file: str, judgments) -> None:
             fh.write(json.dumps(row) + "\n")
 
 
+_load_cache: dict[str, tuple[int, int, list[dict]]] = {}
+
+
 def load_judgments(log_file: str) -> list[dict]:
-    """Read every judgment row; skips blank/corrupt lines rather than failing."""
+    """Read every judgment row; skips blank/corrupt lines rather than failing.
+
+    Cached by (mtime, size): the log is append-only and grows across the
+    system's lifetime, but is re-read from scratch on every ticket's trust
+    computation (`worker._build_trust`) plus every bench/mutation/selection
+    run — an unchanged file returns the cached parse instead of re-reading
+    and re-parsing every row again. Any change to the file (an append from a
+    canary or a fresh run) changes its size and invalidates the cache.
+    """
     path = Path(log_file)
+    key = str(path)
     if not path.exists():
+        _load_cache.pop(key, None)
         return []
+    stat = path.stat()
+    cached = _load_cache.get(key)
+    if cached is not None and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+        return cached[2]
     out: list[dict] = []
     for line in path.read_text().splitlines():
         line = line.strip()
@@ -61,4 +78,5 @@ def load_judgments(log_file: str) -> list[dict]:
             out.append(json.loads(line))
         except json.JSONDecodeError:
             continue
+    _load_cache[key] = (stat.st_mtime_ns, stat.st_size, out)
     return out
