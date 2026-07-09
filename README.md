@@ -56,6 +56,14 @@ highest-leverage reliability lever): each seat is a bare Claude model or an
 OpenAI-compatible backend spec (GPT / Gemini / DeepSeek / Qwen, directly or
 via OpenRouter). See `council_models` in `config.yaml`.
 
+Every approval carries a **formal trust score** (`trust.py`): one 0–100 number
+composing the calibrated council posterior, deterministic checks, tamper findings,
+clean-sandbox reproduction + teeth, mutation score, and risk into an *itemized*
+breakdown (`+ council posterior +56 · + checks +12 · − HIGH-risk −7 …`), written
+into the receipt, the PR body, and the run summary. This is the "assurance layer"
+made legible — the coding worker is interchangeable; the measurable trust verdict
+is the product.
+
 A **deterministic gate** runs before the diff council: configured test/linter
 commands must pass in the worktree, and a tamper scan flags gamed tests
 (deleted assertions, skip markers, CI edits). Optional **clean-sandbox
@@ -274,6 +282,10 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/drift.py` | Continuous reviewer-drift detection via CUSUM (RQ3) |
 | `agent_team/mutation.py` | Mutation-based review evaluation + free labeled-data engine (#7) |
 | `agent_team/selection.py` | Adaptive min-cost reviewer selection per dollar (RQ2) |
+| `agent_team/trust.py` | Formal trust score composing all assurance signals (#8/#10) |
+| `agent_team/evolution.py` | Per-seat model comparison + swap recommendations (#6) |
+| `agent_team/corpus.py` | Self-benchmarking corpus size + statistical-power report (#9) |
+| `agent_team/evidence.py` | Structured evidence graphs for explainable verdicts (#4) |
 | `agent_team/receipts.py` | Ed25519-signed, hash-chained audit receipts + verifier |
 | `agent_team/workspace.py` | Git worktrees, commits, diffs, push/PR (deterministic code) |
 | `agent_team/backlog.py` | tasks.yaml or GitHub Issues backlog |

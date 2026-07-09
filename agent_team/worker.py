@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 from claude_agent_sdk import ClaudeAgentOptions
 
-from . import council, receipts, risk, sandbox
+from . import council, evidence, judgments, receipts, reliability, risk, sandbox, trust
 from .checks import run_checks, tamper_scan
 from .models import CouncilDecision, Outcome, Ticket, TicketResult
 from .runner import AgentRunError, Budget, BudgetExceeded, extract_json_block, run_agent
@@ -46,9 +46,33 @@ def _ticket_block(ticket: Ticket) -> str:
     return f"## Ticket {ticket.id}: {ticket.title}\n\n{ticket.description}"
 
 
+def _build_trust(cfg: dict, decision: CouncilDecision, assessment, checks_passed: bool,
+                 tamper_n: int, sbx_repro, sbx_teeth) -> trust.TrustReport:
+    """Compose the assurance signals into a trust score. Best-effort: a missing
+    reliability model just drops the calibrated posterior to a neutral prior."""
+    posterior_correct, evidence_n = None, None
+    try:
+        log_file = (cfg.get("reliability") or {}).get("log_file")
+        if log_file:
+            model = reliability.estimate_reliability(judgments.load_judgments(log_file))
+            if model:
+                votes = [(v.reviewer, not v.approve) for v in decision.verdicts]
+                posterior_correct = 1.0 - reliability.posterior_defect_prob(votes, model)
+                ns = [model[v.reviewer].n_defect for v in decision.verdicts
+                      if v.reviewer in model]
+                evidence_n = sum(ns) / len(ns) if ns else None
+    except Exception as exc:      # trust scoring must never sink a ticket
+        log.debug("trust: reliability lookup failed: %s", exc)
+    return trust.assess_trust(trust.AssuranceInputs(
+        council_posterior_correct=posterior_correct, checks_passed=checks_passed,
+        tamper_findings=tamper_n, sandbox_reproduced=sbx_repro, sandbox_teeth=sbx_teeth,
+        risk_level=assessment.level.value, reviewer_evidence_n=evidence_n))
+
+
 async def _emit_receipt(cfg: dict, ticket: Ticket, ws: Workspace, commit_sha: str,
                         decision: CouncilDecision, action: str, council_rule: str,
-                        assessment: "risk.RiskAssessment", pr_url: str = "") -> None:
+                        assessment: "risk.RiskAssessment",
+                        trust_report: "trust.TrustReport", pr_url: str = "") -> None:
     """Best-effort signed audit receipt for a trust-boundary action.
 
     Never fatal: a signing/IO failure is logged but must not fail an otherwise
@@ -72,6 +96,8 @@ async def _emit_receipt(cfg: dict, ticket: Ticket, ws: Workspace, commit_sha: st
                       for v in decision.verdicts],
             risk_level=assessment.level.value,
             merge_disposition=risk.merge_disposition(assessment.level),
+            trust_score=round(trust_report.score, 1),
+            trust_grade=trust_report.grade,
             pr_url=pr_url,
         )
         receipts.emit(receipt, key,
@@ -92,6 +118,9 @@ def _write_escalation(ws: Workspace, ticket: Ticket, reason: str,
             mark = "approve" if v.approve else "REJECT"
             lines.append(f"- **{v.reviewer}** ({mark}): {v.reasoning}")
             lines.extend(f"  - {e}" for e in v.evidence)
+            graph = evidence.render_graph(v.claims, indent="  ")
+            if graph:
+                lines.append(graph)
         lines.append("")
     if plan_text:
         lines += ["## Last plan", plan_text, ""]
@@ -200,6 +229,9 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
             review_rounds = 0
             decision = None
             last_gate_failure = ""
+            tamper_findings: list[str] = []
+            sandbox_repro: bool | None = None
+            sandbox_teeth: bool | None = None
             for review_rounds in range(1, max_rounds + 1):
                 try:
                     await run_agent(impl_prompt, impl_options, budgets=budgets)
@@ -266,6 +298,7 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
                                 "passes from a clean checkout; do not weaken tests.\n\n"
                                 f"{report.hard_failure}")
                             continue
+                        sandbox_repro, sandbox_teeth = report.reproduced, report.teeth
                         if report.error:
                             log.warning("[%s] sandbox verification errored: %s",
                                         ticket.id, report.error)
@@ -329,13 +362,19 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
             # carrying the change's risk level and (always human) merge disposition.
             approved_sha = await ws.head_sha()
             disposition = risk.merge_disposition(assessment.level)
+            trust_report = _build_trust(cfg, decision, assessment, checks_passed=True,
+                                        tamper_n=len(tamper_findings),
+                                        sbx_repro=sandbox_repro, sbx_teeth=sandbox_teeth)
+            log.info("[%s] trust %.0f/100 (%s)", ticket.id, trust_report.score,
+                     trust_report.grade)
             if cfg.get("dry_run", True):
                 await _emit_receipt(cfg, ticket, ws, approved_sha, decision,
-                                    "approved", effective_rule, assessment)
+                                    "approved", effective_rule, assessment, trust_report)
                 return TicketResult(ticket, Outcome.APPROVED_DRY_RUN, branch=ws.branch,
                                     worktree=str(ws.path), plan_rounds=plan_rounds,
                                     review_rounds=review_rounds,
                                     risk_level=assessment.level.value, disposition=disposition,
+                                    trust_score=trust_report.score, trust_grade=trust_report.grade,
                                     detail="dry_run enabled — branch ready, not pushed")
 
             approvals = "\n".join(
@@ -344,15 +383,17 @@ async def run_ticket(ticket: Ticket, cfg: dict, locks,
             pr_url = await ws.push_and_open_pr(
                 title=f"{ticket.id}: {ticket.title}",
                 body=(f"{ticket.description}\n\n## Plan\n{plan_text}\n\n"
-                      f"**Risk:** {assessment.level.value} — merge: {disposition}\n\n"
+                      f"**Risk:** {assessment.level.value} — merge: {disposition}\n"
+                      f"**Trust:** {trust_report.score:.0f}/100 ({trust_report.grade})\n\n"
                       f"## Council review\n{approvals}"),
             )
             await _emit_receipt(cfg, ticket, ws, approved_sha, decision,
-                                "pr_opened", effective_rule, assessment, pr_url)
+                                "pr_opened", effective_rule, assessment, trust_report, pr_url)
             await ws.remove(keep_branch=True)
             return TicketResult(ticket, Outcome.PR_OPENED, branch=ws.branch,
                                 plan_rounds=plan_rounds, review_rounds=review_rounds,
                                 risk_level=assessment.level.value, disposition=disposition,
+                                trust_score=trust_report.score, trust_grade=trust_report.grade,
                                 detail=pr_url)
         finally:
             await locks.release(ticket.id)

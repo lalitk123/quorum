@@ -14,6 +14,7 @@ against "optimistic verdicts" that approve without inspecting anything.
 
 import asyncio
 
+from . import evidence
 from .models import CouncilDecision, Verdict
 from .reviewers import SeatSpec, resolve_seat, run_reviewer
 from .runner import AgentRunError, Budget, extract_json_block
@@ -66,10 +67,15 @@ _VERDICT_TAIL = (
     "findings that do.\n"
     "End your response with exactly one JSON object:\n"
     '{"verdict": "approve" | "reject", "reasoning": "<one or two sentences>", '
-    '"evidence": ["path/to/file.py:42 — what you verified or found there"]}\n'
-    "Reject only for concrete, actionable problems — state precisely what must "
-    "change. Do not reject for style preferences. An approval with an empty "
-    "evidence list is discarded, so always cite what you checked."
+    '"evidence": ["path/to/file.py:42 — what you verified or found there"], '
+    '"claims": [{"statement": "<a specific claim>", "evidence": ["file.py:42"], '
+    '"stance": "supports_reject" | "supports_approve", '
+    '"counter": "<the strongest argument against this claim>"}]}\n'
+    "The `claims` evidence graph is optional but expected for any non-trivial "
+    "finding: state each claim, the file:line it rests on, and the best "
+    "counterargument to it. Reject only for concrete, actionable problems — state "
+    "precisely what must change. Do not reject for style preferences. An approval "
+    "with an empty evidence list is discarded, so always cite what you checked."
 )
 
 
@@ -94,9 +100,10 @@ async def _review_one(
         return Verdict(reviewer=name, approve=False,
                        reasoning=f"unparseable verdict: {text[-300:]}")
 
-    evidence = [str(e) for e in parsed.get("evidence") or [] if str(e).strip()]
+    cited = [str(e) for e in parsed.get("evidence") or [] if str(e).strip()]
+    claims = evidence.normalize_claims(parsed.get("claims"))
     approve = parsed["verdict"] == "approve"
-    if approve and not evidence:
+    if approve and not cited:
         # Fail closed against optimistic rubber-stamps: approval requires
         # evidence of actual inspection.
         return Verdict(reviewer=name, approve=False,
@@ -105,7 +112,8 @@ async def _review_one(
         reviewer=name,
         approve=approve,
         reasoning=str(parsed.get("reasoning", "")),
-        evidence=evidence,
+        evidence=cited,
+        claims=claims,
     )
 
 

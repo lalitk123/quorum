@@ -53,6 +53,8 @@ class Receipt:
     verdicts: list[dict] = field(default_factory=list)  # [{reviewer, approve}]
     risk_level: str = ""
     merge_disposition: str = ""
+    trust_score: float = 0.0
+    trust_grade: str = ""
     pr_url: str = ""
     prev_hash: str = GENESIS_PREV
     version: int = RECEIPT_VERSION

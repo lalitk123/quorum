@@ -114,6 +114,15 @@ methodology + infrastructure, with results that sharpen as the log grows.
   lower credible bound (fail-closed). `--bench` grows the labeled corpus and
   reports the model; `python main.py --reliability` prints it. Deterministic,
   unit-tested against hand-computed probabilities.
+- **Formal trust score** (`agent_team/trust.py`). Composes every assurance signal
+  — calibrated council posterior (from the reliability model), deterministic
+  checks, tamper findings, clean-sandbox reproduction + teeth, mutation score,
+  risk level, and reviewer track record — into one 0–100 score with a fully
+  itemized breakdown (which component contributed what, and which one is the
+  calibrated probability vs the heuristic tally). Written into the signed receipt,
+  the PR body, and the run summary. This is the concrete "AI software *assurance*
+  layer" (idea #10): the worker is interchangeable; the measurable trust verdict
+  is the product. Deterministic, unit-tested.
 - Goal → council-approved DAG decomposition; dependency-aware scheduling;
   stacked PRs; file-overlap locks; human-only merge.
 
@@ -185,6 +194,24 @@ methodology + infrastructure, with results that sharpen as the log grows.
   DAG, dispatching as dependencies clear, governed by merge throughput.
 - Bounded self-repair on escalation (auto-decompose repeatedly-failing
   tickets) — partial today via revision rounds + ESCALATION.md.
+- **Automatic reviewer evolution** (`agent_team/evolution.py`,
+  `python main.py --evolve`). Because the judgment log records which *model*
+  produced each verdict, models are compared head-to-head per seat on the same
+  labeled cases; a swap is recommended only when a challenger's balanced accuracy
+  beats the incumbent by a margin *and* rests on enough evidence (never promoting
+  a lucky small sample). Advisory — a human changes the config. Unit-tested.
+- **Self-benchmarking corpus** (`agent_team/corpus.py`, `python main.py --corpus`).
+  Reports the judgment dataset as a growing asset: size, source/label breakdown,
+  per-seat counts, and — the point — the **statistical power** it buys, as each
+  seat's sensitivity credible-interval width (narrower = stronger). Includes
+  `record_production_outcome`, the hook that turns a later-reverted shipped change
+  into ground-truth-labeled training data (accepted-PR-becomes-data loop).
+- **Evidence graphs** (`agent_team/evidence.py`). Each seat may back its verdict
+  with a graph of claims — statement, file:line evidence, stance, and the
+  strongest *counterargument* to itself — normalized fail-closed and rendered into
+  the escalation report and PR notes, so an approval is a walkable structure, not
+  a rubber stamp. Unit-tested schema/parser/renderer; the council prompt invites
+  the graph for any non-trivial finding.
 - Self-improvement of reviewer prompts/decomposer heuristics gated on the
   gold-set regression eval only (spec + regression oracle, never a raw metric).
 

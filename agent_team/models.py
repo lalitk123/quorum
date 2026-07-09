@@ -16,6 +16,7 @@ class Verdict:
     approve: bool
     reasoning: str
     evidence: list[str] = field(default_factory=list)
+    claims: list[dict] = field(default_factory=list)   # evidence graph (idea #4)
 
 
 @dataclass
@@ -55,3 +56,5 @@ class TicketResult:
     review_rounds: int = 0
     risk_level: str = ""
     disposition: str = ""      # human-facing merge recommendation (merge stays human)
+    trust_score: float | None = None
+    trust_grade: str = ""

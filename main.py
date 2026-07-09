@@ -59,6 +59,16 @@ def main() -> None:
         help="Recommend a minimum-cost council reaching the target detection from "
              "measured reliability (RQ2). Defaults to reliability.log_file.",
     )
+    parser.add_argument(
+        "--evolve", nargs="?", const="", default=None, metavar="JUDGMENT_LOG",
+        help="Compare models per seat and recommend swaps (reviewer evolution). "
+             "Defaults to reliability.log_file.",
+    )
+    parser.add_argument(
+        "--corpus", nargs="?", const="", default=None, metavar="JUDGMENT_LOG",
+        help="Report the judgment corpus size, sources, and statistical power. "
+             "Defaults to reliability.log_file.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -112,6 +122,21 @@ def main() -> None:
             target_detection=float(sel_cfg.get("target_detection", 0.95)),
             budget=sel_cfg.get("budget"))
         print(selection.format_selection(sel, model))
+        return
+
+    if args.evolve is not None:
+        from agent_team import evolution, judgments
+        path = args.evolve or (cfg.get("reliability") or {}).get(
+            "log_file", ".agent_team/judgments.jsonl")
+        print(evolution.format_evolution(
+            evolution.recommend_evolution(judgments.load_judgments(path))))
+        return
+
+    if args.corpus is not None:
+        from agent_team import corpus, judgments
+        path = args.corpus or (cfg.get("reliability") or {}).get(
+            "log_file", ".agent_team/judgments.jsonl")
+        print(corpus.format_corpus(corpus.corpus_stats(judgments.load_judgments(path))))
         return
 
     if args.drift is not None:
