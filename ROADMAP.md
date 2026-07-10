@@ -38,6 +38,17 @@ direct measurement instead of corrected by assumption. The headline result: the
 independence gap is negligible at the full council, where detection saturates, and
 large on exactly the small subsets the reviewer selector evaluates.
 
+RQ1 rested on a second unexamined premise: that a seat *has* an accuracy at all.
+Every sensitivity in this system is measured from one verdict per case, but an LLM
+reviewer is stochastic — ask it twice and it may answer twice differently. So
+`stability.py` measures test-retest consistency and derives the bound it implies:
+`|s - ½| ≤ √(1 - 2f)/2`, where `f` is the verdict flip rate under re-running. **A
+seat cannot be more accurate than it is self-consistent.** This bounds the validity
+of every other number the platform reports, and it is distribution-free. It also
+prices the fix: a flaky seat can be majority-voted with itself `k` times, and `k`
+is computable — except at `f = ½`, where no `k` suffices, because the majority of
+`k` fair coins is still a fair coin.
+
 The enabler for all three is a **free labeled-data engine** (`mutation.py`): gold
 cases, canaries, and mutants are defective *by construction*, so every seat
 verdict on them is a labeled reliability datapoint — no human labeling required.
@@ -174,6 +185,28 @@ methodology + infrastructure, with results that sharpen as the log grows.
   one seat, not twice as much). Empirically the gap is nearly invisible at the full
   five-seat council (detection saturates) and severe on the small subsets the
   selector actually evaluates — which is precisely where it does damage.
+- **Repeat-run stability + the accuracy ceiling** (`agent_team/stability.py`,
+  `python main.py --stability`). Every accuracy figure the platform reports comes
+  from one verdict per seat per case; a stochastic reviewer that flips its verdict
+  on a re-run does not *have* that accuracy. This measures each seat's **flip rate**
+  `f` over cases it judged more than once — using the unbiased pairwise estimator
+  `Σ r(n-r) / Σ C(n,2)`, with a **cluster bootstrap** over cases, since pairs drawn
+  from one case share that case's latent reject probability and a Beta interval over
+  pairs would be too narrow. From `f` it derives the distribution-free **accuracy
+  ceiling** `½ + √(1-2f)/2`: a seat flipping 32% of re-runs cannot exceed 80%
+  sensitivity, whatever the benchmark says. Flakiness is then priced — `runs@5%` is
+  the number of self-repeats whose majority vote flips ≤5% of the time — and is
+  correctly reported as `never` for a coin-flip seat, since the majority of `k` fair
+  coins is still a fair coin. Finally it cross-checks the reliability model against
+  the ceiling in two tiers: an **advisory** when a seat's reported accuracy exceeds
+  even the most generous ceiling its flip data allows (its competence lives entirely
+  in cases it was never asked twice), and a **strict** failure, which `--stability`
+  exits non-zero on, when the accuracy's *lower* credible bound still clears that
+  ceiling — a contradiction no estimation noise on either side can manufacture.
+  Test-retest **Cohen's κ** is reported too, and marked when the seat's marginals are
+  skewed enough that κ measures the marginal rather than the consistency (the kappa
+  paradox: a seat rejecting 95% of the time agrees with itself 90% of the time by
+  chance, and can score κ < 0 while flipping only 10% of re-runs).
 - **Automatic reviewer evolution** (`agent_team/evolution.py`,
   `python main.py --evolve`). Because the judgment log records which *model*
   produced each verdict, models are compared head-to-head per seat on the same
@@ -203,11 +236,15 @@ methodology + infrastructure, with results that sharpen as the log grows.
 ## Next: reliability
 
 - **Grow the gold set + tune from it.** The measurement harness exists; now grow
-  the corpus toward 30–200 labeled diffs from the real distribution, add
-  repeat-run stability (verdict flip-rate under resampling — a seat cannot be more
-  *accurate* than it is self-*consistent*, and we do not yet measure the ceiling),
-  and use the per-seat κ / detection numbers to weight or re-route seats and set
-  aggregation thresholds empirically rather than by intuition.
+  the corpus toward 30–200 labeled diffs from the real distribution, and use the
+  per-seat κ / detection numbers to weight or re-route seats and set aggregation
+  thresholds empirically rather than by intuition.
+- **Spend the stability measurement.** `stability.py` measures the flip rate and
+  prices the repeats that would fix it; nothing consumes that yet. Two hooks: cap
+  each seat's likelihood ratio in `posterior_defect_prob` at its measured ceiling
+  (a seat cannot contribute more evidence than its consistency permits), and let
+  `selection.py` buy `k` self-repeats of a cheap flaky seat instead of one run of
+  an expensive stable one when that is the better detection-per-dollar trade.
 - **Baseline-relative canary alerting.** Canaries alert today on absolute
   thresholds (gate approval, dissent floor). Record a per-seat baseline from the
   gold sweep so a canary can flag a *seat-specific* dissent collapse (a seat that

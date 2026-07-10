@@ -75,6 +75,13 @@ def main() -> None:
              "selector: measured vs predicted joint detection, pairwise φ, blind-spot "
              "overlap. Defaults to reliability.log_file.",
     )
+    parser.add_argument(
+        "--stability", nargs="?", const="", default=None, metavar="JUDGMENT_LOG",
+        help="Measure each seat's test-retest stability over cases it judged more "
+             "than once: verdict flip rate, the accuracy ceiling that implies, and "
+             "any seat whose reported accuracy exceeds it. Exits non-zero on a "
+             "ceiling violation. Defaults to reliability.log_file.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -137,6 +144,18 @@ def main() -> None:
         path = args.independence or (cfg.get("reliability") or {}).get(
             "log_file", ".agent_team/judgments.jsonl")
         print(independence.format_independence(judgments.load_judgments(path)))
+        return
+
+    if args.stability is not None:
+        from agent_team import judgments, stability
+        path = args.stability or (cfg.get("reliability") or {}).get(
+            "log_file", ".agent_team/judgments.jsonl")
+        rows = judgments.load_judgments(path)
+        print(stability.format_stability(rows))
+        # A seat claiming more accuracy than its consistency permits is a broken
+        # instrument, and the trust score is computed from that claim. Fail closed.
+        if stability.ceiling_violations(rows):
+            sys.exit(1)
         return
 
     if args.evolve is not None:

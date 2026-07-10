@@ -213,6 +213,64 @@ seats — two perfect clones rejecting now persuade exactly as much as one seat,
 twice as much. Where joint data is too thin, it falls back to the independence
 product and labels the step as such rather than pretending.
 
+## Does a reviewer even *have* an accuracy? (repeat-run stability)
+
+Every sensitivity above is measured from **one verdict per seat per case**. But an
+LLM reviewer is stochastic: ask it the same question twice and it may reject once
+and approve once. If a seat changes its mind that easily, "96% sensitivity" is not
+a property of the seat — it is one draw the benchmark happened to catch on a good
+day. So measure the seat against *itself*:
+
+```bash
+python main.py --stability         # exits non-zero on a ceiling violation
+```
+
+Let `p` be the seat's probability of rejecting a given defect. Run it twice on that
+case and it contradicts itself with probability `2p(1-p)`. Pool that flip rate `f`
+across defect cases, apply Jensen's inequality, and a hard bound falls out:
+
+> **|s − ½| ≤ √(1 − 2f) / 2** — a seat cannot be more *accurate* than it is
+> self-*consistent*.
+
+It is distribution-free, and it bounds every accuracy number this platform reports.
+A reviewer that flips 32% of its re-runs cannot have sensitivity above 80%, however
+well it scored on a single pass. The run below is *illustrative*, on a synthetic log
+where `architect` was planted to look strong on the once-judged gold set and be a
+coin flip on the re-run canaries:
+
+```console
+$ python main.py --stability
+=== Repeat-run stability (test-retest) ===
+  seat          flip rate [90% CI]   pairs   kappa   ceiling   runs@5%
+  architect      55% [ 52- 60]        60   -0.10     50%     never  (!) f>1/2: chance
+  product        53% [ 42- 62]        60   -0.11     50%     never  (!) f>1/2: chance
+  qa             47% [ 33- 58]        60    0.06     63%        55
+  adversary      23% [ 10- 38]        60    0.08~    87%         5
+  security       10% [  0- 20]        60   -0.05~    95%         3
+
+  Note: reported accuracy is above even the most generous ceiling the flip data allows:
+     architect  sensitivity reported 61% vs ceiling 50% from a 55% flip rate [+10.9 pts]
+     This seat's apparent competence lives in cases it was never asked twice.
+```
+
+`--reliability` rates `architect` at 61% sensitivity and the Bayesian aggregation
+duly weights its vote. Stability says the verdict is **irreproducible**: it
+contradicts itself on 55% of re-runs, which is what a coin does. The decision that
+follows is categorical — retire or re-route the seat — not a 0.61 weight.
+
+`runs@5%` prices the flakiness: how many self-repeats, majority-voted, drive the
+flip rate under 5%. `security` needs 3; `adversary` needs 5; `architect` says
+**never**, and that is exact rather than pessimistic — the majority of `k` fair
+coins is still a fair coin. That converts "this seat is flaky" into a line item
+RQ2's cost model can act on.
+
+Two details the arithmetic forces. Pairs drawn from one case share that case's `p`,
+so a Beta interval over pairs would be too narrow; the CI is a **cluster bootstrap
+over whole cases**. And the `~` on κ marks the **kappa paradox**: `security` rejects
+95% of the time, so two of its runs already agree 90% of the time by chance, and its
+κ goes *negative* despite a 10% flip rate. There κ measures the marginal, not the
+consistency. Read the flip rate.
+
 ## Verify the verifier (canary diffs)
 
 A benchmark measures the gate once; a live gate can still drift into a rubber
@@ -331,6 +389,7 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/mutation.py` | Mutation-based review evaluation + free labeled-data engine (#7) |
 | `agent_team/selection.py` | Adaptive min-cost reviewer selection per dollar (RQ2) |
 | `agent_team/independence.py` | Audits the independence assumption; measured joint detection |
+| `agent_team/stability.py` | Test-retest flip rate + the accuracy ceiling it implies |
 | `agent_team/trust.py` | Formal trust score composing all assurance signals (#8/#10) |
 | `agent_team/evolution.py` | Per-seat model comparison + swap recommendations (#6) |
 | `agent_team/corpus.py` | Self-benchmarking corpus size + statistical-power report (#9) |

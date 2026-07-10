@@ -57,6 +57,11 @@ def case_outcomes(judgments, label: str = "defect") -> dict[str, dict[str, bool]
     defect, `approve` on a clean case. Rows without a case_id are skipped: without
     one we cannot align seats into a joint observation, and quietly pooling them
     would fabricate independence.
+
+    A seat re-run on the same case collapses to its **latest** verdict — one case
+    contributes one joint observation however many times it was judged, so a
+    repeated case does not get extra weight here. How much that latest verdict is
+    worth is a separate question, answered by `stability.py`.
     """
     want = CAUGHT if label == "defect" else "approve"
     out: dict[str, dict[str, bool]] = defaultdict(dict)
