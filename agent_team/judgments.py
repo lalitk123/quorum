@@ -50,6 +50,16 @@ def append_judgments(log_file: str, judgments) -> None:
 _load_cache: dict[str, tuple[int, int, list[dict]]] = {}
 
 
+def _detach(row: dict) -> dict:
+    """Copy a cached row so a caller cannot write back into the cache.
+
+    `Judgment` nests exactly one level (`condition`), so copying dict values
+    is enough; every other field is a scalar. Costs about a seventh of a
+    re-parse, whereas a full `deepcopy` costs more than one.
+    """
+    return {k: dict(v) if isinstance(v, dict) else v for k, v in row.items()}
+
+
 def load_judgments(log_file: str) -> list[dict]:
     """Read every judgment row; skips blank/corrupt lines rather than failing.
 
@@ -59,6 +69,11 @@ def load_judgments(log_file: str) -> list[dict]:
     run — an unchanged file returns the cached parse instead of re-reading
     and re-parsing every row again. Any change to the file (an append from a
     canary or a fresh run) changes its size and invalidates the cache.
+
+    Callers get a detached copy, never the cached rows themselves. These rows
+    are the evidence behind the reliability model, the trust score, and the
+    signed receipts: a cache that could be written into by one caller and read
+    by the next is a cache that can serve a judgment nobody ever made.
     """
     path = Path(log_file)
     key = str(path)
@@ -68,7 +83,7 @@ def load_judgments(log_file: str) -> list[dict]:
     stat = path.stat()
     cached = _load_cache.get(key)
     if cached is not None and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
-        return cached[2]
+        return [_detach(r) for r in cached[2]]
     out: list[dict] = []
     for line in path.read_text().splitlines():
         line = line.strip()
@@ -79,4 +94,4 @@ def load_judgments(log_file: str) -> list[dict]:
         except json.JSONDecodeError:
             continue
     _load_cache[key] = (stat.st_mtime_ns, stat.st_size, out)
-    return out
+    return [_detach(r) for r in out]
