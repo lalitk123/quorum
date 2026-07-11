@@ -355,8 +355,6 @@ Escalated tickets (council never approved within `max_review_rounds`) keep
 their worktree on disk so a human can inspect what the agent and the council
 disagreed about.
 
-## Layout
-
 ## Fully autonomous mode
 
 Set `backlog.source: goal` and write your goal + acceptance criteria in
@@ -369,6 +367,8 @@ is present), and their PRs are stacked on that branch. A failed or escalated
 dependency marks its dependents `blocked` instead of building on air.
 
 `tasks.yaml` tickets may also declare `depends_on: [T1]` by hand.
+
+## Layout
 
 | File | Role |
 |---|---|
