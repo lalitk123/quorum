@@ -33,6 +33,7 @@ beat one expensive star.
 from dataclasses import dataclass, field
 
 from .reliability import SeatReliability, estimate_reliability
+from .stability import _majority_reject_prob, accuracy_ceiling
 
 
 @dataclass
@@ -73,6 +74,10 @@ def select_reviewers(model: dict[str, SeatReliability], costs: dict[str, float] 
     product — so two seats that miss the same defects stop looking additive. It
     returns `None` for subsets with too little joint data, and we fall back to the
     independence model for those, recording which estimator decided each step.
+
+    To let the greedy also *buy self-repeats* of a cheap flaky seat (majority-voting
+    one seat `k` times to raise its effective sensitivity), see
+    `select_with_repeats`, which the CLI reaches via `recommend_council(max_repeats>1)`.
     """
     costs = costs or {}
 
@@ -114,6 +119,91 @@ def select_reviewers(model: dict[str, SeatReliability], costs: dict[str, float] 
     return Selection(chosen, detection, cost, steps)
 
 
+def select_with_repeats(model: dict[str, SeatReliability],
+                        flip_rates: dict[str, float] | None = None,
+                        costs: dict[str, float] | None = None,
+                        target_detection: float = 0.95, budget: float | None = None,
+                        default_cost: float = 1.0, conservative: bool = False,
+                        max_repeats: int = 5) -> Selection:
+    """Greedy selection that can *buy majority-voted self-repeats* of a flaky seat.
+
+    This is the consumer of `stability.py`'s pricing: a stochastic seat cannot have
+    accuracy above its consistency ceiling `p = min(sensitivity, ceiling(flip_rate))`,
+    but running it `k` (odd) times and majority-voting drives its *effective*
+    sensitivity toward 1 at `k×` the cost. So `k` runs of a cheap flaky seat can beat
+    one run of an expensive stable one when target detection would otherwise force
+    the expensive purchase.
+
+    Each greedy step makes the best detection-per-dollar move among: (a) add a new
+    seat at one run, or (b) buy two more repeats of an already-chosen seat (raising
+    its effective sensitivity). Detection is the independence combine
+    `1 - Π(1 - eff_i)` throughout — the measured-joint estimator is only defined for
+    single-run distinct-seat subsets, so repeats deliberately use the independence
+    model (and a repeat's evidence is the same conditional-independence assumption
+    the fallback already makes). With `max_repeats=1` this reduces to a cost-aware
+    single-run greedy under the independence model.
+    """
+    costs = costs or {}
+    flip_rates = flip_rates or {}
+
+    def base_p(s):
+        r = model[s]
+        p = min(max(r.sens_lo if conservative else r.sens_mean, 0.0), 1.0)
+        if s in flip_rates:
+            p = min(p, accuracy_ceiling(flip_rates[s]))   # bounded by consistency
+        return p
+
+    def eff(s, k):
+        return base_p(s) if k == 1 else _majority_reject_prob(base_p(s), k)
+
+    reps: dict[str, int] = {}                 # chosen seat -> current odd repeat count
+    order: list[str] = []
+    detection, cost, steps = 0.0, 0.0, []
+
+    def detection_without(s):
+        """Current detection with seat s's contribution divided out (independence)."""
+        e = eff(s, reps[s])
+        return 1.0 - (1.0 - detection) / (1.0 - e) if e < 1.0 else detection
+
+    while detection < target_detection - 1e-12:
+        best = None
+        # (a) add a new seat at one run
+        for s in set(model) - set(reps):
+            c = costs.get(s, default_cost) or default_cost
+            if budget is not None and cost + c > budget + 1e-9:
+                continue
+            new_det = max(1.0 - (1.0 - detection) * (1.0 - eff(s, 1)), detection)
+            score = (new_det - detection) / c
+            if best is None or score > best["score"]:
+                best = {"seat": s, "reps": 1, "add_cost": c, "new_det": new_det,
+                        "score": score, "kind": "add"}
+        # (b) buy two more repeats of an already-chosen (flaky) seat
+        for s in list(reps):
+            k2 = reps[s] + 2
+            if k2 > max_repeats:
+                continue
+            c = 2.0 * (costs.get(s, default_cost) or default_cost)
+            if budget is not None and cost + c > budget + 1e-9:
+                continue
+            base_det = detection_without(s)
+            new_det = max(1.0 - (1.0 - base_det) * (1.0 - eff(s, k2)), detection)
+            score = (new_det - detection) / c
+            if best is None or score > best["score"]:
+                best = {"seat": s, "reps": k2, "add_cost": c, "new_det": new_det,
+                        "score": score, "kind": "repeat"}
+        if best is None or best["new_det"] - detection <= 1e-12:
+            break                                     # nothing affordable/helpful left
+        s = best["seat"]
+        if best["kind"] == "add":
+            order.append(s)
+        reps[s] = best["reps"]
+        detection, cost = best["new_det"], cost + best["add_cost"]
+        steps.append({"seat": s, "repeats": reps[s], "detection": round(detection, 4),
+                      "marginal_per_dollar": round(best["score"], 4),
+                      "estimator": "repeat" if best["kind"] == "repeat" else "independence"})
+    return Selection(order, detection, cost, steps)
+
+
 def recall_per_dollar(model: dict[str, SeatReliability],
                       costs: dict[str, float] | None = None,
                       default_cost: float = 1.0) -> list[tuple[str, float]]:
@@ -133,7 +223,9 @@ def format_selection(sel: Selection, model: dict[str, SeatReliability]) -> str:
                  f"at cost {sel.cost:g}")
     lines.append("  greedy trail (seat: cumulative detection, marginal/$, estimator):")
     for st in sel.steps:
-        lines.append(f"    + {st['seat']:<12} -> {st['detection']:.1%}  "
+        reps = st.get("repeats", 1)
+        rep_tag = f" ×{reps}" if reps > 1 else ""
+        lines.append(f"    + {st['seat']:<12}{rep_tag:<4} -> {st['detection']:.1%}  "
                      f"({st['marginal_per_dollar']:.3f}/$)  [{st.get('estimator', 'independence')}]")
     if any(st.get("estimator") == "independence" for st in sel.steps):
         lines.append("  note: 'independence' steps assume seats miss defects independently — "
@@ -144,15 +236,24 @@ def format_selection(sel: Selection, model: dict[str, SeatReliability]) -> str:
 def recommend_council(judgments, costs: dict[str, float] | None = None,
                       target_detection: float = 0.95, budget: float | None = None,
                       empirical: bool = True, conservative: bool = False,
-                      **conds) -> Selection:
+                      max_repeats: int = 1, **conds) -> Selection:
     """End-to-end: estimate reliability (optionally condition-sliced) then select.
 
     `empirical=True` (default) measures each candidate subset's joint detection from
     the judgment log instead of assuming seats are independent, falling back to the
-    independence product only where joint data is too thin.
+    independence product only where joint data is too thin. `max_repeats > 1` lets
+    the selector buy majority-voted self-repeats of a flaky-but-cheap seat, priced
+    from its measured repeat-run flip rate.
     """
     rows = for_condition(judgments, **conds) if conds else list(judgments)
     model = estimate_reliability(rows)
+    if max_repeats > 1:
+        from .stability import seat_stability
+        flip_rates = {s: st.flip_rate
+                      for s, st in seat_stability(rows, label="defect").items()
+                      if st.observed}
+        return select_with_repeats(model, flip_rates, costs, target_detection, budget,
+                                   conservative=conservative, max_repeats=max_repeats)
     joint = None
     if empirical:
         from .independence import make_empirical_detector
