@@ -226,3 +226,67 @@ def test_rows_without_case_id_are_ignored_rather_than_faking_a_joint():
     rows = [{"seat": "a", "verdict": "reject", "label": "defect"},
             {"seat": "b", "verdict": "approve", "label": "defect"}]
     assert empirical_detection(rows, ["a", "b"]).observed is False
+
+
+# ---- Conditional independence: φ sliced by defect class -----------------------
+
+from agent_team.independence import (          # noqa: E402
+    conditional_hotspots, format_independence, pairwise_dependence_sliced,
+)
+
+
+def _crow(seat, case, correct, cond):
+    return {"seat": seat, "verdict": "reject" if correct else "approve",
+            "label": "defect", "case_id": case, "condition": {"bug_type": cond}}
+
+
+# Pooled over all 8 defects a,b look decorrelated (φ = 0): they miss together on
+# 'auth' (φ = +1) but complement each other on 'other' (φ = -1), and the two cancel.
+SLICED = (
+    # auth: both catch, both catch, both miss, both miss  -> perfectly correlated
+    [_crow("a", "c1", True, "auth"),  _crow("b", "c1", True, "auth")]
+    + [_crow("a", "c2", True, "auth"),  _crow("b", "c2", True, "auth")]
+    + [_crow("a", "c3", False, "auth"), _crow("b", "c3", False, "auth")]
+    + [_crow("a", "c4", False, "auth"), _crow("b", "c4", False, "auth")]
+    # other: exactly one catches each case -> perfectly anti-correlated
+    + [_crow("a", "c5", True, "other"),  _crow("b", "c5", False, "other")]
+    + [_crow("a", "c6", True, "other"),  _crow("b", "c6", False, "other")]
+    + [_crow("a", "c7", False, "other"), _crow("b", "c7", True, "other")]
+    + [_crow("a", "c8", False, "other"), _crow("b", "c8", True, "other")]
+)
+
+
+def test_pooled_phi_hides_a_correlation_that_slicing_reveals():
+    assert mean_phi(SLICED) == 0.0                       # decorrelated overall
+    sliced = pairwise_dependence_sliced(SLICED, "bug_type")
+    assert set(sliced) == {"auth", "other"}
+    assert math.isclose(sliced["auth"][0].phi, 1.0)      # correlated on auth
+    assert math.isclose(sliced["other"][0].phi, -1.0)    # complementary on other
+
+
+def test_conditional_hotspots_flags_the_correlated_class_only():
+    hs = conditional_hotspots(SLICED, "bug_type")
+    assert len(hs) == 1
+    h = hs[0]
+    assert (h.condition_value, {h.a, h.b}) == ("auth", {"a", "b"})
+    assert math.isclose(h.sliced_phi, 1.0) and math.isclose(h.pooled_phi, 0.0)
+    assert math.isclose(h.excess, 1.0)
+
+
+def test_hotspots_respect_min_excess_and_min_cases():
+    assert conditional_hotspots(SLICED, "bug_type", min_excess=1.5) == []   # too strict
+    assert conditional_hotspots(SLICED, "bug_type", min_cases=5) == []      # slices have n=4
+
+
+def test_rows_without_the_condition_key_yield_no_slices():
+    plain = _rows({"a": [1, 1, 0, 0], "b": [1, 1, 0, 0]})   # no `condition`
+    assert pairwise_dependence_sliced(plain, "bug_type") == {}
+    assert conditional_hotspots(plain, "bug_type") == []
+
+
+def test_format_independence_reports_the_sliced_hotspot():
+    out = format_independence(SLICED, slice_by="bug_type")
+    assert "conditional independence" in out
+    assert "auth" in out and "(!)" in out
+    # Without slicing, the section is absent.
+    assert "conditional independence" not in format_independence(SLICED)

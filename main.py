@@ -155,7 +155,9 @@ def main() -> None:
         from agent_team import independence, judgments
         path = args.independence or (cfg.get("reliability") or {}).get(
             "log_file", ".agent_team/judgments.jsonl")
-        print(independence.format_independence(judgments.load_judgments(path)))
+        slice_by = (cfg.get("independence") or {}).get("slice_by")
+        print(independence.format_independence(judgments.load_judgments(path),
+                                               slice_by=slice_by))
         return
 
     if args.stability is not None:

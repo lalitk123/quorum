@@ -93,6 +93,11 @@ drift:
 
 # Adaptive reviewer selection (RQ2): from measured reliability, recommend the
 # minimum-cost council reaching target_detection. `python main.py --select`.
+independence:
+  slice_by:                    # optional condition key (e.g. bug_type) to slice φ by,
+                               # surfacing seat pairs that share a blind spot on one
+                               # defect class even if the jury looks decorrelated overall
+
 selection:
   target_detection: 0.95       # required P(the team catches a real defect)
   seat_costs: {}               # optional per-seat USD cost; uniform if omitted

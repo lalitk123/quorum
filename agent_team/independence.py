@@ -207,6 +207,73 @@ def mean_phi(judgments, seats=None, clamp_negative: bool = True) -> float:
     return sum(vals) / len(vals)
 
 
+# ---- Conditional independence (slice φ by defect class) ----------------------
+
+def _by_condition(judgments, key: str) -> dict[str, list[dict]]:
+    """Group labeled rows by the value of `condition[key]`. Rows lacking that key
+    are dropped — a slice must name the class it is about."""
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for j in judgments:
+        cond = j.get("condition") or {}
+        if key in cond:
+            groups[str(cond[key])].append(j)
+    return dict(groups)
+
+
+def pairwise_dependence_sliced(judgments, key: str,
+                               seats=None) -> dict[str, list[PairDependence]]:
+    """Pairwise φ computed *within* each value of `condition[key]`.
+
+    The pooled audit measures φ over every defect at once, so two seats can look
+    decorrelated overall yet share a blind spot on exactly the class that matters
+    (e.g. `condition={'bug_type': 'auth'}`). Slicing recomputes the same pairwise
+    dependence per class, one φ per (slice, pair).
+    """
+    return {val: pairwise_dependence(rows, seats)
+            for val, rows in _by_condition(judgments, key).items()}
+
+
+@dataclass
+class ConditionalHotspot:
+    condition_key: str
+    condition_value: str
+    a: str
+    b: str
+    n: int
+    sliced_phi: float           # φ within this defect class
+    pooled_phi: float | None    # φ over all defects (None if undefined pooled)
+
+    @property
+    def excess(self) -> float:
+        """How much more correlated the pair is inside this class than overall."""
+        return self.sliced_phi - (self.pooled_phi or 0.0)
+
+
+def conditional_hotspots(judgments, key: str, seats=None, min_excess: float = 0.2,
+                         min_cases: int = 3) -> list[ConditionalHotspot]:
+    """Seat pairs whose blind spots are far more correlated in one defect class than
+    pooled — the hidden dependence the marginal audit misses.
+
+    A pair is a hotspot when its φ *within* a slice exceeds its pooled φ by at least
+    `min_excess`, on at least `min_cases` complete joint observations in that slice.
+    These are the pairs to distrust for that class even when the overall jury looks
+    decorrelated. Sorted by excess, worst first.
+    """
+    pooled = {tuple(sorted((p.a, p.b))): p.phi
+              for p in pairwise_dependence(judgments, seats)}
+    found: list[ConditionalHotspot] = []
+    for val, pairs in pairwise_dependence_sliced(judgments, key, seats).items():
+        for p in pairs:
+            if p.phi is None or p.n < min_cases:
+                continue
+            pooled_phi = pooled.get(tuple(sorted((p.a, p.b))))
+            if p.phi - (pooled_phi or 0.0) >= min_excess:
+                found.append(ConditionalHotspot(
+                    condition_key=key, condition_value=val, a=p.a, b=p.b, n=p.n,
+                    sliced_phi=p.phi, pooled_phi=pooled_phi))
+    return sorted(found, key=lambda h: h.excess, reverse=True)
+
+
 # ---- Correcting the Bayesian aggregator --------------------------------------
 
 def design_effect(k: int, phi_bar: float) -> float:
@@ -263,7 +330,8 @@ def make_empirical_detector(judgments, conservative: bool = False, min_cases: in
 
 # ---- Reporting ---------------------------------------------------------------
 
-def format_independence(judgments, seats=None) -> str:
+def format_independence(judgments, seats=None, slice_by: str | None = None) -> str:
+    judgments = list(judgments)
     outcomes = case_outcomes(judgments, "defect")
     if seats is None:
         seats = sorted({s for o in outcomes.values() for s in o})
@@ -312,4 +380,20 @@ def format_independence(judgments, seats=None) -> str:
                 f"           {cov}")
         lines.append("  (φ>0 = seats miss the same defects; a low P(b|a misses) means b "
                      "does not cover for a)")
+
+    if slice_by:
+        hotspots = conditional_hotspots(judgments, slice_by, seats)
+        lines += ["", f"  conditional independence (φ sliced by '{slice_by}'):"]
+        if not hotspots:
+            lines.append(f"    no pair is materially more correlated within any "
+                         f"'{slice_by}' class than pooled.")
+        else:
+            lines.append("    pair                  class            φ(slice) vs φ(pooled)   n")
+            for h in hotspots:
+                pooled = "  n/a" if h.pooled_phi is None else f"{h.pooled_phi:+.2f}"
+                lines.append(
+                    f"    {h.a + ' + ' + h.b:<20}  {h.condition_value:<14}  "
+                    f"{h.sliced_phi:+.2f} vs {pooled}   ({h.n})  (!)")
+            lines.append("    these pairs share a blind spot on a specific defect class "
+                         "even if the jury looks decorrelated overall.")
     return "\n".join(lines)
