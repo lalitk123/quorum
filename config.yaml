@@ -97,6 +97,9 @@ selection:
   target_detection: 0.95       # required P(the team catches a real defect)
   seat_costs: {}               # optional per-seat USD cost; uniform if omitted
   budget:                      # optional hard cost cap (null = none)
+  max_repeats: 1               # >1 lets the selector buy k majority-voted self-
+                               # repeats of a flaky-but-cheap seat (priced from its
+                               # measured flip rate) instead of one expensive seat
 
 # Backlog source — defaults to autonomous goal mode: a decomposer agent turns
 # goal.md into a ticket backlog (council-reviewed) and the team builds it.
