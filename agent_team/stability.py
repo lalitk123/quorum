@@ -242,6 +242,40 @@ def seat_stability(judgments, label: str | None = None, ci: float = 0.90,
     return out
 
 
+def stability_ceilings(judgments, ci: float = 0.90,
+                       generous: bool = False) -> dict[str, tuple[float, float]]:
+    """Per-seat `(sensitivity_ceiling, specificity_ceiling)` from repeat-run flip rates.
+
+    The accuracy ceiling `½ + √(1-2f)/2` is the most a seat flipping `f` of its
+    re-runs can score; sensitivity is bounded by its flip rate on defect cases and
+    specificity by its flip rate on clean cases. Feeding this to
+    `reliability.posterior_defect_prob(..., ceilings=...)` caps how much any single
+    verdict from a flaky seat can move the posterior — a seat cannot contribute more
+    evidence than its self-consistency permits.
+
+    `generous=False` (default) uses the point-estimate ceiling; `generous=True` uses
+    the ceiling at the *lowest* plausible flip rate (the seat's best case), which
+    only bites when even the seat's most favourable consistency can't support the
+    claimed accuracy. Seats with no repeated cases (nothing measured) are omitted,
+    leaving them uncapped.
+    """
+    judgments = list(judgments)
+    sens = seat_stability(judgments, label="defect", ci=ci)
+    spec = seat_stability(judgments, label="clean", ci=ci)
+
+    def ceil_of(st) -> float:
+        if st is None or not st.observed:
+            return 1.0
+        return st.ceiling_generous if generous else st.ceiling
+
+    out: dict[str, tuple[float, float]] = {}
+    for seat in set(sens) | set(spec):
+        sc, tc = ceil_of(sens.get(seat)), ceil_of(spec.get(seat))
+        if sc < 1.0 or tc < 1.0:          # omit fully-uncapped seats — no measured repeats
+            out[seat] = (sc, tc)
+    return out
+
+
 # ---- Cross-checking the reliability model against the ceiling ----------------
 
 @dataclass

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from claude_agent_sdk import ClaudeAgentOptions
 
 from . import (council, evidence, independence, judgments, receipts, reliability,
-               risk, sandbox, trust)
+               risk, sandbox, stability, trust)
 from .checks import run_checks, tamper_scan
 from .models import CouncilDecision, Outcome, Ticket, TicketResult
 from .runner import AgentRunError, Budget, BudgetExceeded, extract_json_block, run_agent
@@ -63,8 +63,12 @@ def _build_trust(cfg: dict, decision: CouncilDecision, assessment, checks_passed
                 # their combined weight to the effective number of independent reviewers.
                 discount = independence.correlation_discount(
                     rows, [v.reviewer for v in decision.verdicts])
+                # A seat cannot contribute more evidence than its self-consistency
+                # permits: cap each seat's likelihood ratio at its measured accuracy
+                # ceiling so a flaky reviewer's verdict is worth what its flip rate says.
+                ceilings = stability.stability_ceilings(rows)
                 posterior_correct = 1.0 - reliability.posterior_defect_prob(
-                    votes, model, discount=discount)
+                    votes, model, discount=discount, ceilings=ceilings)
                 ns = [model[v.reviewer].n_defect for v in decision.verdicts
                       if v.reviewer in model]
                 evidence_n = sum(ns) / len(ns) if ns else None
