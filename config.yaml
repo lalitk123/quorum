@@ -75,6 +75,9 @@ canary:
   gold_dir: bench/gold         # bad cases (label: reject) are reused as canaries
   sample_every: 5              # inject one canary per N real diff reviews
   min_dissent: 2               # fewer seats rejecting a known defect => warning
+  baseline_floor: 0.75         # a seat that caught this defect >= this rate before but
+                               # approves it now is flagged as a seat-specific regression
+  baseline_min_n: 3            # min prior observations before a seat has a baseline
 
 # Reviewer-judgment dataset + reliability model. When log_file is set, --bench
 # appends one labeled judgment per seat verdict and reports each seat's estimated

@@ -77,3 +77,84 @@ async def test_run_if_due_records_and_logs(monkeypatch):
     monkeypatch.setattr(CanaryMonitor, "_review", fake_review)
     await mon.run_if_due({}, budgets=())
     assert len(mon.results) == 1 and mon.results[0].critical
+
+
+# ---- Baseline-relative (seat-specific) regression alerts ---------------------
+
+from agent_team.canary import baseline_catch_rates, seat_catch_counts   # noqa: E402
+
+
+def _dj(seat, case, verdict):
+    return {"seat": seat, "case_id": case, "verdict": verdict, "label": "defect"}
+
+
+def test_seat_catch_counts_are_case_scoped():
+    rows = [_dj("security", "sql", "reject"), _dj("security", "sql", "reject"),
+            _dj("security", "xss", "approve"), _dj("qa", "sql", "approve")]
+    assert seat_catch_counts(rows, "sql") == {"security": (2, 2), "qa": (0, 1)}
+    assert seat_catch_counts(rows)["security"] == (2, 3)   # pooled over both cases
+
+
+def test_baseline_prefers_case_history_then_falls_back_to_overall():
+    rows = ([_dj("security", "sql", "reject")] * 4        # strong on this case
+            + [_dj("qa", "other", "reject")] * 4)         # no 'sql' history, strong overall
+    base = baseline_catch_rates(rows, "sql", min_n=3)
+    assert base["security"] == pytest.approx(1.0)          # case-specific
+    assert base["qa"] == pytest.approx(1.0)                # fell back to overall
+    # A seat with too little history either way gets no baseline (no regression claim).
+    assert "newbie" not in baseline_catch_rates(
+        rows + [_dj("newbie", "sql", "approve")], "sql", min_n=3)
+
+
+def test_a_reliable_seat_that_now_misses_is_flagged_a_regression():
+    v = _verdicts(architect=False, security=True, qa=False, product=False, adversary=False)
+    # security caught this canary 100% before but approved it now.
+    r = evaluate_canary("sql-injection", gate_approved=False, verdicts=v, min_dissent=2,
+                        baselines={"security": 1.0}, baseline_floor=0.75)
+    assert r.regressed_seats == ["security"]
+    assert any("REGRESSION" in a and "security" in a for a in r.alerts)
+    # The panel still rejected with plenty of dissent, so absent the baseline there
+    # would have been no warning at all.
+    assert not any("WARNING" in a for a in r.alerts)
+
+
+def test_a_seat_below_its_baseline_floor_is_not_flagged():
+    v = _verdicts(architect=False, security=True, qa=False, product=False, adversary=False)
+    # security only caught this 50% historically -> approving now is within noise.
+    r = evaluate_canary("sql-injection", gate_approved=False, verdicts=v, min_dissent=2,
+                        baselines={"security": 0.5}, baseline_floor=0.75)
+    assert r.regressed_seats == []
+    assert not any("REGRESSION" in a for a in r.alerts)
+
+
+def test_monitor_computes_baselines_from_the_log_before_appending(tmp_path):
+    import asyncio
+    from agent_team import bench as bench_mod
+
+    log = str(tmp_path / "j.jsonl")
+    from agent_team import judgments
+    # History: security reliably caught 'sql', then it approves it on this review.
+    judgments.append_judgments(log, [_dj("security", "sql", "reject") for _ in range(4)])
+
+    case = bench_mod.GoldCase(id="sql", title="t", description="d",
+                              expected_approve=False, diff="", note="", workspace_src=None)
+
+    class _R:
+        error = ""
+        decision_approved = False
+        cost_usd = 0.0
+        verdicts = _verdicts(architect=False, security=True, qa=False,
+                             product=False, adversary=False)
+
+    async def fake_run_case(c, cfg, cap):
+        return _R()
+
+    mon = CanaryMonitor([case], sample_every=1, min_dissent=2, budget_cap=None,
+                        judgment_log=log, baseline_floor=0.75, baseline_min_n=3)
+    orig = bench_mod._run_case
+    bench_mod._run_case = fake_run_case
+    try:
+        result = asyncio.run(mon._review(case, {}, ()))
+    finally:
+        bench_mod._run_case = orig
+    assert result.regressed_seats == ["security"]
