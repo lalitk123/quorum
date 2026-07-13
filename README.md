@@ -102,6 +102,12 @@ python main.py --config config.yaml
 To feed hand-written tickets or GitHub issues instead, set `backlog.source`
 to `file` or `github` in `config.yaml`.
 
+Inside **Claude Code**, the bundled `/quorum` skill
+(`.claude/skills/quorum/SKILL.md`) wraps this same loop: type `/quorum` to run
+the team against `goal.md`, or `/quorum <goal text>` to set the goal first. It
+runs pre-flight checks (a real `repo_path`, seat credentials, `dry_run`) before
+spending any tokens and keeps pushing behind explicit confirmation.
+
 Run the unit tests for the deterministic fail-closed logic:
 
 ```bash
@@ -398,3 +404,4 @@ dependency marks its dependents `blocked` instead of building on air.
 | `agent_team/workspace.py` | Git worktrees, commits, diffs, push/PR (deterministic code) |
 | `agent_team/backlog.py` | tasks.yaml or GitHub Issues backlog |
 | `agent_team/runner.py` | Thin `query()` wrapper + JSON extraction |
+| `.claude/skills/quorum/SKILL.md` | Claude Code `/quorum` skill: runs the build loop over `goal.md` |
