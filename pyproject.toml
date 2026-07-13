@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quorum"
+version = "0.1.0"
+description = "A fail-closed, benchmarked, cryptographically auditable council of adversarial AI reviewers."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "claude-agent-sdk>=0.1.0",
+    "PyYAML>=6.0",
+    "cryptography>=42.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+quorum = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["agent_team*"]
+
+# pytest configuration lives in pytest.ini (single source of truth).

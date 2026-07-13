@@ -130,6 +130,50 @@ def test_conservative_uses_lower_bounds():
     assert cautious < optimistic
 
 
+# ---- Ceiling-capped likelihood ratio (spends the stability measurement) ------
+
+def test_ceiling_caps_a_strong_seats_reject_evidence():
+    m = _model(sec=(0.9, 0.9))
+    # Uncapped a reject drives P(defect) to 0.9 (LR = 0.9/0.1 = 9).
+    uncapped = posterior_defect_prob([("sec", True)], m, base_rate=0.5)
+    # A ceiling of 0.6 on both caps s,t to 0.6: LR = 0.6/0.4 = 1.5 -> 1.5/2.5 = 0.6.
+    capped = posterior_defect_prob([("sec", True)], m, base_rate=0.5,
+                                   ceilings={"sec": (0.6, 0.6)})
+    assert uncapped == pytest.approx(0.9, abs=1e-6)
+    assert capped == pytest.approx(0.6, abs=1e-6)
+    assert capped < uncapped
+
+
+def test_ceiling_at_half_removes_all_influence():
+    # A seat whose consistency ceiling is 1/2 is a coin: its likelihood ratio is 1,
+    # so the posterior is left at the base rate whichever way it votes.
+    m = _model(sec=(0.95, 0.95))
+    ceilings = {"sec": (0.5, 0.5)}
+    assert posterior_defect_prob([("sec", True)], m, base_rate=0.3,
+                                 ceilings=ceilings) == pytest.approx(0.3)
+    assert posterior_defect_prob([("sec", False)], m, base_rate=0.7,
+                                 ceilings=ceilings) == pytest.approx(0.7)
+
+
+def test_ceiling_above_measured_accuracy_does_not_change_anything():
+    m = _model(sec=(0.9, 0.9))
+    base = posterior_defect_prob([("sec", True)], m, base_rate=0.5)
+    # A ceiling that sits above the measured accuracy never bites (min keeps it).
+    loose = posterior_defect_prob([("sec", True)], m, base_rate=0.5,
+                                  ceilings={"sec": (0.99, 0.99)})
+    assert loose == pytest.approx(base)
+
+
+def test_seat_absent_from_ceilings_is_left_uncapped():
+    m = _model(a=(0.9, 0.9), b=(0.9, 0.9))
+    # Only 'a' is capped; 'b' behaves exactly as it would with no ceilings at all.
+    with_ceil = posterior_defect_prob([("a", True), ("b", True)], m, base_rate=0.5,
+                                      ceilings={"a": (0.5, 0.5)})
+    b_only = posterior_defect_prob([("b", True)], m, base_rate=0.5)
+    # 'a' contributes nothing (ceiling 1/2), so the pair equals 'b' alone.
+    assert with_ceil == pytest.approx(b_only)
+
+
 # ---- Judgment log round-trip -------------------------------------------------
 
 def test_judgment_log_roundtrip(tmp_path):

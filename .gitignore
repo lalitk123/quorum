@@ -5,3 +5,7 @@ __pycache__/
 .agent_team/
 .claude/worktrees/
 graphify-out/
+*.egg-info/
+build/
+dist/
+.worktrees/

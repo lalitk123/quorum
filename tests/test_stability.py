@@ -16,6 +16,7 @@ from agent_team.stability import (
     repeat_groups,
     runs_for_stability,
     seat_stability,
+    stability_ceilings,
 )
 
 
@@ -417,3 +418,32 @@ def test_format_stability_marks_a_seat_that_cannot_be_told_from_chance():
     out = stability.format_stability(rows)
     assert "indistinguishable from chance" in out
     assert "never" in out                     # no number of repeats rescues it
+
+
+# ---- Ceilings consumed by the aggregation (spends the stability measurement) --
+
+def test_stability_ceilings_bound_sensitivity_by_the_defect_flip_rate():
+    # A seat with real defect-case flips but no clean repeats: capped on
+    # sensitivity, left uncapped on specificity.
+    rows = sum((_rows("a", f"c{i}", [R, R, R, R, A], "defect") for i in range(6)), [])
+    st = seat_stability(rows, label="defect")["a"]
+    ceilings = stability_ceilings(rows)
+    assert "a" in ceilings
+    sens_ceiling, spec_ceiling = ceilings["a"]
+    assert sens_ceiling == pytest.approx(accuracy_ceiling(st.flip_rate))
+    assert sens_ceiling < 1.0
+    assert spec_ceiling == 1.0                # no clean repeats -> no specificity cap
+
+
+def test_a_perfectly_consistent_seat_is_omitted_and_left_uncapped():
+    # Never flips on either label -> ceiling 1.0 on both -> nothing to cap.
+    rows = (_rows("a", "c1", [R, R, R], "defect")
+            + _rows("a", "c2", [A, A, A], "clean"))
+    assert "a" not in stability_ceilings(rows)
+
+
+def test_generous_ceilings_are_at_least_as_high_as_point_estimate_ceilings():
+    rows = sum((_rows("a", f"c{i}", [R, R, A]) for i in range(8)), [])
+    point = stability_ceilings(rows)["a"][0]
+    generous = stability_ceilings(rows, generous=True)["a"][0]
+    assert generous >= point - 1e-12

@@ -5,7 +5,8 @@ import pytest
 
 from agent_team.reliability import SeatReliability
 from agent_team.selection import (
-    for_condition, recall_per_dollar, select_reviewers, team_detection,
+    for_condition, recall_per_dollar, select_reviewers, select_with_repeats,
+    team_detection,
 )
 
 
@@ -92,3 +93,70 @@ def test_recall_per_dollar_ranks_by_sensitivity_over_cost():
     ranked = recall_per_dollar(m, costs={"a": 3.0, "b": 1.0})
     # b: 0.6/1 = 0.6 beats a: 0.9/3 = 0.3
     assert ranked[0][0] == "b"
+
+
+# ---- Buying self-repeats of a flaky seat (spends the stability pricing) -------
+
+# flip rate 0.32 -> accuracy ceiling 0.5 + sqrt(1-0.64)/2 = 0.8
+FLAKY_FLIP = 0.32
+CEIL = 0.8
+
+
+def test_repeats_of_a_cheap_flaky_seat_beat_one_expensive_stable_seat():
+    # One run of the flaky seat is capped at its 0.8 consistency ceiling (< target),
+    # but five majority-voted runs reach 0.942 for a cost of 5 — cheaper than adding
+    # the stable seat at cost 100.
+    m = _model(flaky=0.9, stable=0.99)
+    sel = select_with_repeats(
+        m, flip_rates={"flaky": FLAKY_FLIP}, costs={"flaky": 1.0, "stable": 100.0},
+        target_detection=0.94, max_repeats=5)
+    assert sel.seats == ["flaky"]                 # the expensive seat was never bought
+    assert sel.steps[-1]["repeats"] == 5
+    assert sel.detection == pytest.approx(0.94208, abs=1e-4)
+    assert sel.cost == pytest.approx(5.0)
+
+
+def test_single_run_greedy_is_forced_onto_the_expensive_seat():
+    # Without repeats, the same target cannot be met by the flaky seat alone (capped
+    # at 0.8), so the stable seat must be added — the trade repeats avoid.
+    m = _model(flaky=0.8, stable=0.99)             # 0.8 = the flaky seat's ceiling
+    sel = select_reviewers(m, costs={"flaky": 1.0, "stable": 100.0},
+                           target_detection=0.94)
+    assert set(sel.seats) == {"flaky", "stable"}
+    assert sel.cost == pytest.approx(101.0)
+
+
+def test_one_run_effective_sensitivity_is_capped_at_the_ceiling():
+    # With max_repeats=1 the selector still bounds a flaky seat's single-run
+    # sensitivity by its consistency ceiling (0.8), not its optimistic 0.9.
+    m = _model(flaky=0.9)
+    sel = select_with_repeats(m, flip_rates={"flaky": FLAKY_FLIP},
+                              target_detection=0.75, max_repeats=1)
+    assert sel.detection == pytest.approx(CEIL)
+
+
+def test_a_seat_without_a_flip_rate_is_not_capped():
+    m = _model(clean=0.9)
+    sel = select_with_repeats(m, flip_rates={}, target_detection=0.85, max_repeats=1)
+    assert sel.detection == pytest.approx(0.9)     # uncapped: uses the measured sens
+
+
+def test_budget_forbids_buying_repeats():
+    # A budget of 1 allows the first run but not the +2 repeats (cost 2 more).
+    m = _model(flaky=0.9, stable=0.99)
+    sel = select_with_repeats(
+        m, flip_rates={"flaky": FLAKY_FLIP}, costs={"flaky": 1.0, "stable": 100.0},
+        target_detection=0.99, budget=1.0, max_repeats=5)
+    assert sel.seats == ["flaky"]
+    assert sel.steps[-1]["repeats"] == 1
+    assert sel.cost == pytest.approx(1.0)
+
+
+def test_repeat_steps_are_recorded_in_the_audit_trail():
+    m = _model(flaky=0.9)
+    sel = select_with_repeats(m, flip_rates={"flaky": FLAKY_FLIP},
+                              target_detection=0.94, max_repeats=5)
+    estimators = [s["estimator"] for s in sel.steps]
+    repeats = [s["repeats"] for s in sel.steps]
+    assert "repeat" in estimators                  # at least one repeat purchase
+    assert repeats == sorted(repeats)              # repeats grow monotonically (1,3,5)

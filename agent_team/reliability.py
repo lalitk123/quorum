@@ -159,7 +159,8 @@ def estimate_reliability(judgments, prior_a: float = 0.5, prior_b: float = 0.5,
 def posterior_defect_prob(votes, model: dict[str, SeatReliability],
                           base_rate: float = 0.5, conservative: bool = False,
                           default_sens: float = 0.5, default_spec: float = 0.5,
-                          eps: float = 1e-3, discount: float = 1.0) -> float:
+                          eps: float = 1e-3, discount: float = 1.0,
+                          ceilings: dict[str, tuple[float, float]] | None = None) -> float:
     """P(defect | votes), combining seats as conditionally-independent sensors.
 
     `votes` is an iterable of (seat, is_reject). Seats absent from the model use
@@ -174,6 +175,15 @@ def posterior_defect_prob(votes, model: dict[str, SeatReliability],
     independent and this is the plain Bayes update. Below 1.0 the panel's evidence
     is worth fewer independent votes, so the posterior is pulled back toward the
     base rate rather than being stacked up by near-duplicate reviewers.
+
+    `ceilings` optionally maps a seat to `(sensitivity_ceiling, specificity_ceiling)`
+    — the maximum accuracy its measured self-consistency permits
+    (`stability.stability_ceilings`, from the repeat-run flip rate). A seat's
+    sensitivity/specificity is capped at its ceiling before the likelihood ratio is
+    formed, so a flaky seat cannot contribute more evidence than its consistency
+    allows: as the ceiling falls to ½ the seat's likelihood ratio is pulled to 1
+    (no influence), matching what the stability bound says its verdict is worth.
+    Seats absent from `ceilings` are left uncapped.
     """
     log_odds = math.log(base_rate / (1 - base_rate))
     evidence = 0.0
@@ -185,6 +195,10 @@ def posterior_defect_prob(votes, model: dict[str, SeatReliability],
             s, t = r.sens_lo, r.spec_lo
         else:
             s, t = r.sens_mean, r.spec_mean
+        if ceilings is not None:
+            cap = ceilings.get(seat)
+            if cap is not None:
+                s, t = min(s, cap[0]), min(t, cap[1])
         s = min(max(s, eps), 1 - eps)
         t = min(max(t, eps), 1 - eps)
         lr = s / (1 - t) if is_reject else (1 - s) / t

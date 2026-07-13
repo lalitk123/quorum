@@ -23,6 +23,7 @@ skipped (never fatal) if the budget is tight.
 
 import asyncio
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -42,21 +43,73 @@ class CanaryResult:
     alerts: list[str] = field(default_factory=list)
     cost_usd: float = 0.0
     error: str = ""
+    regressed_seats: list[str] = field(default_factory=list)  # missed vs their own baseline
 
     @property
     def critical(self) -> bool:
         return self.gate_approved
 
 
+def seat_catch_counts(judgments, case_id: str | None = None) -> dict[str, tuple[int, int]]:
+    """`{seat: (caught, total)}` over defect rows — how often each seat rejected a
+    known defect. `case_id` restricts to one case's history."""
+    agg: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    for j in judgments:
+        if j.get("label") != "defect":
+            continue
+        if case_id is not None and j.get("case_id") != case_id:
+            continue
+        seat, verdict = j.get("seat"), j.get("verdict")
+        if not seat or verdict not in ("approve", "reject"):
+            continue
+        agg[seat][1] += 1
+        if verdict == "reject":
+            agg[seat][0] += 1
+    return {s: (c, n) for s, (c, n) in agg.items()}
+
+
+def baseline_catch_rates(judgments, case_id: str, min_n: int = 3) -> dict[str, float]:
+    """Per-seat baseline catch rate for a canary case: its historical reject rate on
+    *this* case when there is enough of it, otherwise its rate over all defects.
+
+    This is what turns a panel-wide dissent floor into a *seat-specific* one: a seat
+    that used to catch this defect and now misses it has regressed, even if the panel
+    as a whole still rejected. Seats with fewer than `min_n` observations either way
+    are omitted — no baseline, no regression claim.
+    """
+    specific = seat_catch_counts(judgments, case_id)
+    overall = seat_catch_counts(judgments)
+    out: dict[str, float] = {}
+    for seat in set(specific) | set(overall):
+        c, n = specific.get(seat, (0, 0))
+        if n >= min_n:
+            out[seat] = c / n
+        else:
+            c2, n2 = overall.get(seat, (0, 0))
+            if n2 >= min_n:
+                out[seat] = c2 / n2
+    return out
+
+
 def evaluate_canary(case_id: str, gate_approved: bool, verdicts: list[Verdict],
-                    min_dissent: int) -> CanaryResult:
+                    min_dissent: int, baselines: dict[str, float] | None = None,
+                    baseline_floor: float = 0.75) -> CanaryResult:
     """Deterministic verdict on a known-bad canary review.
 
     `min_dissent` is the number of seats that must reject a known defect before
     the panel is considered healthy; fewer is a dissent-collapse warning.
+
+    `baselines` (per-seat historical catch rate, from `baseline_catch_rates`) adds a
+    *seat-specific* regression check: a seat that approves this canary while its own
+    baseline catch rate is at least `baseline_floor` has degraded against itself —
+    flagged even when the panel still rejected, because it is the leading edge of a
+    drift a panel-wide floor would only notice once several seats had gone.
     """
     approving = sorted(v.reviewer for v in verdicts if v.approve)
     rejecting = sorted(v.reviewer for v in verdicts if not v.approve)
+    baselines = baselines or {}
+    regressed = [s for s in approving
+                 if baselines.get(s, 0.0) >= baseline_floor]
     alerts: list[str] = []
     if gate_approved:
         alerts.append(
@@ -67,10 +120,16 @@ def evaluate_canary(case_id: str, gate_approved: bool, verdicts: list[Verdict],
             f"WARNING: dissent collapsed on canary '{case_id}' — only "
             f"{len(rejecting)} seat(s) rejected a known defect (healthy floor is "
             f"{min_dissent}). The panel is close to waving defects through.")
+    for s in regressed:
+        alerts.append(
+            f"REGRESSION: seat '{s}' historically caught this defect "
+            f"({baselines[s]:.0%}) but APPROVED canary '{case_id}' — a seat-specific "
+            "dissent collapse, ahead of any panel-wide one.")
     if approving:
         alerts.append(
             f"seats fooled by '{case_id}': {', '.join(approving)}")
-    return CanaryResult(case_id, gate_approved, rejecting, approving, alerts)
+    return CanaryResult(case_id, gate_approved, rejecting, approving, alerts,
+                        regressed_seats=regressed)
 
 
 class CanaryMonitor:
@@ -82,12 +141,15 @@ class CanaryMonitor:
     """
 
     def __init__(self, cases: list, sample_every: int, min_dissent: int,
-                 budget_cap: float | None, judgment_log: str | None = None):
+                 budget_cap: float | None, judgment_log: str | None = None,
+                 baseline_floor: float = 0.75, baseline_min_n: int = 3):
         self.cases = cases
         self.sample_every = sample_every
         self.min_dissent = min_dissent
         self.budget_cap = budget_cap
         self.judgment_log = judgment_log
+        self.baseline_floor = baseline_floor
+        self.baseline_min_n = baseline_min_n
         self.results: list[CanaryResult] = []
         self._reviews = 0
         self._idx = 0
@@ -138,11 +200,25 @@ class CanaryMonitor:
         if case_result.error:
             return CanaryResult(case.id, False, [], [], error=case_result.error,
                                 cost_usd=case_result.cost_usd)
+        # Baseline from history BEFORE this review's verdicts are appended, so a seat
+        # is measured against its own past, not against the row we are about to write.
+        baselines = self._baselines(case.id)
         self._log_judgments(case, case_result.verdicts)
         result = evaluate_canary(case.id, case_result.decision_approved,
-                                 case_result.verdicts, self.min_dissent)
+                                 case_result.verdicts, self.min_dissent,
+                                 baselines=baselines, baseline_floor=self.baseline_floor)
         result.cost_usd = case_result.cost_usd
         return result
+
+    def _baselines(self, case_id: str) -> dict[str, float]:
+        """Per-seat historical catch rate for this canary case, from the log."""
+        if not self.judgment_log:
+            return {}
+        try:
+            rows = judgments.load_judgments(self.judgment_log)
+        except OSError:
+            return {}
+        return baseline_catch_rates(rows, case_id, self.baseline_min_n)
 
     def _log_judgments(self, case, verdicts) -> None:
         """Persist each seat's verdict on this known-bad canary (label=defect) so
@@ -177,6 +253,8 @@ def build_monitor(cfg: dict) -> CanaryMonitor | None:
         min_dissent=int(canary_cfg.get("min_dissent", 2)),
         budget_cap=budget_cap,
         judgment_log=(cfg.get("reliability") or {}).get("log_file"),
+        baseline_floor=float(canary_cfg.get("baseline_floor", 0.75)),
+        baseline_min_n=int(canary_cfg.get("baseline_min_n", 3)),
     )
 
 
@@ -205,11 +283,14 @@ async def run_canary_sweep(cfg: dict, gold_dir: str) -> list[CanaryResult]:
     cases = [c for c in bench.load_gold(gold_dir) if not c.expected_approve]
     if not cases:
         raise ValueError(f"no bad (label: reject) gold cases in {gold_dir}")
-    min_dissent = int((cfg.get("canary") or {}).get("min_dissent", 2))
+    canary_cfg = cfg.get("canary") or {}
+    min_dissent = int(canary_cfg.get("min_dissent", 2))
     budget_cap = (cfg.get("budget") or {}).get("per_ticket_usd")
     monitor = CanaryMonitor(cases, sample_every=1, min_dissent=min_dissent,
                             budget_cap=budget_cap,
-                            judgment_log=(cfg.get("reliability") or {}).get("log_file"))
+                            judgment_log=(cfg.get("reliability") or {}).get("log_file"),
+                            baseline_floor=float(canary_cfg.get("baseline_floor", 0.75)),
+                            baseline_min_n=int(canary_cfg.get("baseline_min_n", 3)))
     sem = asyncio.Semaphore(int(cfg.get("max_concurrent_workers", 3)))
 
     async def one(case) -> CanaryResult:

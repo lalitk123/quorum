@@ -125,17 +125,29 @@ def main() -> None:
         return
 
     if args.select is not None:
-        from agent_team import independence, judgments, reliability, selection
+        from agent_team import independence, judgments, reliability, selection, stability
         sel_cfg = cfg.get("selection") or {}
         path = args.select or (cfg.get("reliability") or {}).get(
             "log_file", ".agent_team/judgments.jsonl")
         rows = judgments.load_judgments(path)
         model = reliability.estimate_reliability(rows)
-        sel = selection.select_reviewers(
-            model, costs=sel_cfg.get("seat_costs") or {},
-            target_detection=float(sel_cfg.get("target_detection", 0.95)),
-            budget=sel_cfg.get("budget"),
-            joint=independence.make_empirical_detector(rows))
+        costs = sel_cfg.get("seat_costs") or {}
+        target = float(sel_cfg.get("target_detection", 0.95))
+        budget = sel_cfg.get("budget")
+        max_repeats = int(sel_cfg.get("max_repeats", 1))
+        if max_repeats > 1:
+            # Let the selector buy majority-voted self-repeats of a cheap flaky seat,
+            # priced from its measured repeat-run flip rate (spends stability.py).
+            flip_rates = {s: st.flip_rate
+                          for s, st in stability.seat_stability(rows, label="defect").items()
+                          if st.observed}
+            sel = selection.select_with_repeats(
+                model, flip_rates=flip_rates, costs=costs, target_detection=target,
+                budget=budget, max_repeats=max_repeats)
+        else:
+            sel = selection.select_reviewers(
+                model, costs=costs, target_detection=target, budget=budget,
+                joint=independence.make_empirical_detector(rows))
         print(selection.format_selection(sel, model))
         return
 
@@ -143,7 +155,9 @@ def main() -> None:
         from agent_team import independence, judgments
         path = args.independence or (cfg.get("reliability") or {}).get(
             "log_file", ".agent_team/judgments.jsonl")
-        print(independence.format_independence(judgments.load_judgments(path)))
+        slice_by = (cfg.get("independence") or {}).get("slice_by")
+        print(independence.format_independence(judgments.load_judgments(path),
+                                               slice_by=slice_by))
         return
 
     if args.stability is not None:

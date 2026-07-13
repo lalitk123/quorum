@@ -47,6 +47,8 @@ plan or diff from its own angle:
 - **QA / Test** — test coverage and verification strategy.
 - **Product / Scope** — does this actually solve the stated ticket, is the
   scope right (not more, not less).
+- **Adversary / Red-team** — actively tries to falsify the change: hunts for
+  the failure mode the other seats missed and the way the tests could be gamed.
 
 Each member returns approve/reject + reasoning. Two different consensus bars
 are used depending on the checkpoint (see below) — cheap-and-fast for plan
@@ -87,19 +89,21 @@ bad push is not.
 - **Substrate:** Claude Agent SDK (Python, `claude-agent-sdk`). Workers and
   council members are independent `query()` sessions; `asyncio` provides the
   parallelism.
-- **Council implementation:** four parallel top-level agent sessions (not
+- **Council implementation:** five parallel top-level agent sessions (not
   nested subagents) — each reviewer gets a fresh, isolated context and
   read-only tools, so votes are uncorrelated; aggregation (majority vs
-  unanimous) is deterministic code. Unparseable/errored reviews fail closed
-  as rejections.
+  unanimous) is deterministic code. Unparseable/errored reviews, and approvals
+  citing no file:line evidence, fail closed as rejections. Seats may run on
+  different model families (a heterogeneous jury) to decorrelate errors.
 - **Backlog:** three sources — `tasks.yaml`, open GitHub Issues via `gh`, or
   **goal mode**: a decomposer agent turns a high-level goal + acceptance
   criteria (`goal.md`) into a ticket backlog with dependencies, which the
   council must approve before any worker starts. Dependency cycles are
   rejected in code; dependent tickets branch from their dependency's branch
   and stack their PRs on it; a failed dependency blocks its dependents.
-- **Consensus rules:** plan review = majority (3/4), pre-push = unanimous
-  (4/4); both configurable.
+- **Consensus rules:** plan review = majority (3/5), pre-push = unanimous
+  (5/5); both configurable, and risk-adjusted (a HIGH-risk change is forced to
+  unanimous regardless of the configured bar).
 - **Iteration cap:** `max_review_rounds: 3` per checkpoint, then escalate;
   escalated worktrees are kept on disk for human inspection.
 - **Concurrency:** `max_concurrent_workers: 3` via semaphore; file-overlap

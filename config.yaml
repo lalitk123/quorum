@@ -24,25 +24,39 @@ council_model: sonnet
 # adversary). A heterogeneous jury of disjoint model families decorrelates
 # reviewer errors — the highest-leverage reliability lever. Each seat value is
 # either a bare Claude model string, or a backend spec.
-council_models: {}
-#  # A different Claude tier (weak-form diversity):
-#  adversary: opus
-#  # A cross-family seat via any OpenAI-compatible endpoint. `api_key_env` names
-#  # the env var holding the key. Give per-Mtok prices to fold its spend into
-#  # the USD budget caps; omit them and the seat contributes 0 to the budget.
-#  security:
-#    backend: openai
-#    model: openai/gpt-5.1              # or a bare model id for direct OpenAI
-#    base_url: https://openrouter.ai/api/v1
-#    api_key_env: OPENROUTER_API_KEY
-#    temperature: 0.2
-#    input_price_per_mtok: 2.5
-#    output_price_per_mtok: 10.0
-#  qa:
-#    backend: openai
-#    model: google/gemini-3-pro
-#    base_url: https://openrouter.ai/api/v1
-#    api_key_env: OPENROUTER_API_KEY
+#
+# Active split: a Claude+OpenAI cross-family jury.
+#   - architect, qa       -> inherit council_model (Claude sonnet, your Pro login)
+#   - adversary           -> Claude opus (strong red-team seat)
+#   - security, product   -> OpenAI (billed to your OpenAI credits) — disjoint
+#                            family, so their errors decorrelate from the Claude seats
+# Requires `export OPENAI_API_KEY=…`. The openai backend has no live file tools;
+# those seats judge the diff + plan already in the review prompt.
+#
+# model gpt-5.1 is confirmed available on this account. No `temperature` is set:
+# the GPT-5 reasoning models reject any non-default temperature (HTTP 400), so we
+# let each seat use its own default. The per-Mtok prices below are approximate —
+# update them from OpenAI's pricing page if you want the per_ticket/per_run USD
+# caps to track OpenAI spend precisely (your Claude subscription reports ~$0, so
+# the caps effectively bound the OpenAI seats only).
+council_models:
+  adversary: opus
+  security:
+    backend: openai
+    model: gpt-5.1
+    api_key_env: OPENAI_API_KEY        # base_url defaults to https://api.openai.com/v1
+    input_price_per_mtok: 1.25         # approximate — confirm on OpenAI's pricing page
+    output_price_per_mtok: 10.0        # approximate — confirm on OpenAI's pricing page
+  product:
+    backend: openai
+    model: gpt-5.1
+    api_key_env: OPENAI_API_KEY
+    input_price_per_mtok: 1.25         # approximate — confirm on OpenAI's pricing page
+    output_price_per_mtok: 10.0        # approximate — confirm on OpenAI's pricing page
+#
+# For an OpenRouter-fronted jury instead (GPT / Gemini / DeepSeek / Qwen via one
+# key), set base_url: https://openrouter.ai/api/v1, api_key_env: OPENROUTER_API_KEY,
+# and model: e.g. openai/gpt-5.1 or google/gemini-3-pro.
 
 # Deterministic gate: commands that must exit 0 in the worktree before the
 # council reviews a diff. Failures are fed straight back to the worker.
@@ -75,6 +89,9 @@ canary:
   gold_dir: bench/gold         # bad cases (label: reject) are reused as canaries
   sample_every: 5              # inject one canary per N real diff reviews
   min_dissent: 2               # fewer seats rejecting a known defect => warning
+  baseline_floor: 0.75         # a seat that caught this defect >= this rate before but
+                               # approves it now is flagged as a seat-specific regression
+  baseline_min_n: 3            # min prior observations before a seat has a baseline
 
 # Reviewer-judgment dataset + reliability model. When log_file is set, --bench
 # appends one labeled judgment per seat verdict and reports each seat's estimated
@@ -93,10 +110,18 @@ drift:
 
 # Adaptive reviewer selection (RQ2): from measured reliability, recommend the
 # minimum-cost council reaching target_detection. `python main.py --select`.
+independence:
+  slice_by:                    # optional condition key (e.g. bug_type) to slice φ by,
+                               # surfacing seat pairs that share a blind spot on one
+                               # defect class even if the jury looks decorrelated overall
+
 selection:
   target_detection: 0.95       # required P(the team catches a real defect)
   seat_costs: {}               # optional per-seat USD cost; uniform if omitted
   budget:                      # optional hard cost cap (null = none)
+  max_repeats: 1               # >1 lets the selector buy k majority-voted self-
+                               # repeats of a flaky-but-cheap seat (priced from its
+                               # measured flip rate) instead of one expensive seat
 
 # Backlog source — defaults to autonomous goal mode: a decomposer agent turns
 # goal.md into a ticket backlog (council-reviewed) and the team builds it.
