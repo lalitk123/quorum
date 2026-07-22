@@ -5,7 +5,7 @@ base_branch: main
 
 # Parallelism and review policy
 max_concurrent_workers: 3
-max_review_rounds: 3          # council rejections tolerated per checkpoint before escalating
+max_review_rounds: 2          # council rejections tolerated per checkpoint before escalating
 plan_approval: majority        # majority | unanimous
 push_approval: unanimous       # majority | unanimous
 
@@ -14,7 +14,7 @@ push_approval: unanimous       # majority | unanimous
 # reached majority on the plan gate. The decision is identical to a full run; it
 # only saves the tokens of votes that couldn't change it, at the cost of fewer
 # collected objections per round (so a rejected round may fix less per revision).
-early_exit_voting: false
+early_exit_voting: true
 
 # Models (Agent SDK aliases or full model IDs)
 worker_model: opus
@@ -26,8 +26,10 @@ council_model: sonnet
 # either a bare Claude model string, or a backend spec.
 #
 # Active split: a Claude+OpenAI cross-family jury.
-#   - architect, qa       -> inherit council_model (Claude sonnet, your Pro login)
-#   - adversary           -> Claude opus (strong red-team seat)
+#   - architect, qa, adversary -> inherit council_model (Claude sonnet, your Pro
+#                            login). The adversary was on opus for a stronger
+#                            red-team, but sonnet is the cost/quality default;
+#                            promote it back to opus if you want more teeth.
 #   - security, product   -> OpenAI (billed to your OpenAI credits) — disjoint
 #                            family, so their errors decorrelate from the Claude seats
 # Requires `export OPENAI_API_KEY=…`. The openai backend has no live file tools;
@@ -40,7 +42,7 @@ council_model: sonnet
 # caps to track OpenAI spend precisely (your Claude subscription reports ~$0, so
 # the caps effectively bound the OpenAI seats only).
 council_models:
-  adversary: opus
+  adversary: sonnet
   security:
     backend: openai
     model: gpt-5.1
