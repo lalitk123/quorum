@@ -35,6 +35,18 @@ from .runner import AgentRunError, Budget, run_agent
 HTTP_TIMEOUT_SECONDS = 180
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 
+# In-flight OpenAI calls whose reviewer was cancelled by early-exit voting. The
+# request is already billed, so it is left running to record its own cost; asyncio
+# keeps no strong reference to a bare task, so we hold one here (dropped on
+# completion) to keep it alive until it settles.
+_PENDING_BILLED_CALLS: set[asyncio.Task] = set()
+
+
+def _drain_billed_call(task: asyncio.Task) -> None:
+    _PENDING_BILLED_CALLS.discard(task)
+    if not task.cancelled():
+        task.exception()  # retrieve so a failed detached call doesn't warn
+
 
 @dataclass
 class SeatSpec:
@@ -144,27 +156,30 @@ async def run_reviewer(spec: SeatSpec, system_prompt: str, material: str,
     for b in budgets:
         b.precheck()
 
-    def _account(usage: dict) -> None:
+    async def _billed_call() -> str:
+        # OpenAI bills the request the moment it is dispatched, and the blocking
+        # thread cannot be cancelled — the cost is charged whether or not this
+        # seat's vote still matters. So this task owns its own accounting: it
+        # records the cost against the budget as soon as the request returns,
+        # even if the awaiting reviewer was cancelled by early-exit voting. That
+        # keeps the per-ticket/per-run USD caps from under-counting real spend.
+        text, usage = await asyncio.to_thread(
+            _post_chat_completion, spec, system_prompt, material)
         cost = _seat_cost(spec, usage)
         for b in budgets:
             b.add(cost)
+        return text
 
-    # Run the HTTP call as its own shielded task. If this reviewer is cancelled
-    # mid-flight (early-exit voting forces the gate before this seat votes), the
-    # request is already in flight and OpenAI bills it regardless — a running
-    # thread is not cancellable. So we wait for it and record the cost before
-    # letting the cancellation propagate; otherwise the per-ticket/per-run USD
-    # caps silently under-count real OpenAI spend, which is exactly what they
-    # exist to bound.
-    call = asyncio.ensure_future(
-        asyncio.to_thread(_post_chat_completion, spec, system_prompt, material))
+    call = asyncio.ensure_future(_billed_call())
     try:
-        text, usage = await asyncio.shield(call)
+        # shield so early-exit cancellation doesn't kill the in-flight (already
+        # billed) request out from under its own accounting.
+        return await asyncio.shield(call)
     except asyncio.CancelledError:
-        try:
-            _, usage = await call
-            _account(usage)
-        finally:
-            raise
-    _account(usage)
-    return text
+        # Cancelled by early-exit: do NOT wait for the request — that would block
+        # convene's gate for the full HTTP timeout, defeating early exit. Detach
+        # the call so it still records its cost when it completes, and propagate
+        # the cancellation immediately.
+        _PENDING_BILLED_CALLS.add(call)
+        call.add_done_callback(_drain_billed_call)
+        raise

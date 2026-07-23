@@ -276,9 +276,10 @@ async def test_convene_early_exit_cancels_pending_seats(monkeypatch):
 @pytest.mark.asyncio
 async def test_openai_seat_cost_recorded_when_cancelled_midflight(monkeypatch):
     """Early-exit cancels an in-flight OpenAI seat, but OpenAI still bills the
-    request that is already running in its (un-cancellable) thread. The budget
-    must record that cost, not silently drop it — else the USD caps under-count
-    exactly the spend they exist to bound."""
+    request that is already running in its (un-cancellable) thread. Cancellation
+    must return immediately (so it doesn't block the gate), and the detached call
+    must still record its cost — else the USD caps under-count the spend they
+    exist to bound."""
     from agent_team import reviewers
 
     def slow_post(spec, system, user):
@@ -297,5 +298,9 @@ async def test_openai_seat_cost_recorded_when_cancelled_midflight(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    # 1M prompt tokens * $3/Mtok = $3.00, recorded despite the cancellation.
-    assert budget.spent == pytest.approx(3.0)
+    # Non-blocking: cancellation returned before the ~0.2s request completed, so
+    # nothing is billed yet — the gate is not stalled waiting for OpenAI.
+    assert budget.spent == 0.0
+    # The detached, already-billed call records its own cost once it finishes.
+    await asyncio.gather(*reviewers._PENDING_BILLED_CALLS, return_exceptions=True)
+    assert budget.spent == pytest.approx(3.0)  # 1M prompt tokens * $3/Mtok
