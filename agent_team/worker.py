@@ -124,7 +124,20 @@ def _write_escalation(ws: Workspace, ticket: Ticket, reason: str,
     lines = [f"# Escalation: {ticket.id} — {ticket.title}", "",
              f"**Reason:** {reason}", ""]
     if decision:
-        lines.append("## Council verdicts (final round)")
+        total = len(council.REVIEWERS)
+        voted = {v.reviewer for v in decision.verdicts}
+        if len(voted) < total:
+            # Early-exit voting cancels the remaining seats once the gate's
+            # outcome is forced, so this panel is partial. Say so plainly — a
+            # human triaging the escalation must not read a missing seat as a
+            # seat that had no objection.
+            missing = [s for s in council.REVIEWERS if s not in voted]
+            lines.append(
+                f"## Council verdicts ({len(voted)} of {total} seats polled — "
+                "early-exit cancelled the rest once the outcome was forced)")
+        else:
+            missing = []
+            lines.append("## Council verdicts (final round)")
         for v in decision.verdicts:
             mark = "approve" if v.approve else "REJECT"
             lines.append(f"- **{v.reviewer}** ({mark}): {v.reasoning}")
@@ -132,6 +145,10 @@ def _write_escalation(ws: Workspace, ticket: Ticket, reason: str,
             graph = evidence.render_graph(v.claims, indent="  ")
             if graph:
                 lines.append(graph)
+        if missing:
+            lines.append(
+                f"- _not polled (cancelled before voting): {', '.join(missing)} — "
+                "their objections were never collected_")
         lines.append("")
     if plan_text:
         lines += ["## Last plan", plan_text, ""]

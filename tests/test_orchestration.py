@@ -10,6 +10,7 @@ dependency gating. This covers the control flow that no other test exercises.
 
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,38 @@ from agent_team.models import CouncilDecision, Outcome, Ticket, TicketResult, Ve
 from agent_team.orchestrator import FileLocks
 
 SEATS = list(council.REVIEWERS)
+
+
+def test_escalation_marks_partial_panel_and_names_unpolled_seats(tmp_path):
+    """With early-exit voting, an escalation's panel is partial. The report must
+    label it as partial and name the seats that never voted — a human triaging it
+    must not read a cancelled seat as a seat that raised no objection."""
+    ws = SimpleNamespace(path=tmp_path)
+    ticket = Ticket("T1", "add feature", "desc")
+    decision = CouncilDecision(approved=False, verdicts=[
+        Verdict("security", approve=False, reasoning="sqli", evidence=["app.py:1"])])
+    worker._write_escalation(ws, ticket, "diff rejected", "the plan", decision)
+
+    text = (tmp_path / "ESCALATION.md").read_text()
+    assert f"1 of {len(council.REVIEWERS)} seats polled" in text
+    assert "not polled" in text
+    for seat in council.REVIEWERS:
+        if seat != "security":
+            assert seat in text            # every unpolled seat is named
+
+
+def test_escalation_full_panel_has_no_partial_note(tmp_path):
+    """A complete panel keeps the plain 'final round' heading and no partial note."""
+    ws = SimpleNamespace(path=tmp_path)
+    ticket = Ticket("T1", "add feature", "desc")
+    decision = CouncilDecision(approved=False, verdicts=[
+        Verdict(s, approve=(s != "adversary"), reasoning="ok", evidence=["app.py:1"])
+        for s in council.REVIEWERS])
+    worker._write_escalation(ws, ticket, "diff rejected", "the plan", decision)
+
+    text = (tmp_path / "ESCALATION.md").read_text()
+    assert "final round" in text
+    assert "not polled" not in text
 
 
 def _git(repo, *args):
