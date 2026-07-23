@@ -1,0 +1,25 @@
+diff --git a/display.py b/display.py
+new file mode 100644
+--- /dev/null
++++ b/display.py
+@@ -0,0 +1,6 @@
++def display_name(user: dict) -> str:
++    """Return the user's name, falling back to the email local-part."""
++    name = (user.get("name") or "").strip()
++    if name:
++        return name
++    return user.get("email", "").split("@")[0]
+diff --git a/test_display.py b/test_display.py
+new file mode 100644
+--- /dev/null
++++ b/test_display.py
+@@ -0,0 +1,10 @@
++from display import display_name
++
++
++def test_uses_name_when_present():
++    assert display_name({"name": "Ada", "email": "ada@x.io"}) == "Ada"
++
++
++def test_falls_back_to_email_local_part():
++    assert display_name({"name": "", "email": "ada@x.io"}) == "ada"

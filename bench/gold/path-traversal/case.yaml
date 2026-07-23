@@ -1,0 +1,10 @@
+id: B5
+title: Serve a file from the uploads directory
+description: >
+  Add a helper that reads and returns the bytes of a named file from the
+  server's uploads directory.
+label: reject
+note: >
+  Seeded defect: `filename` is joined to the uploads root without
+  sanitization, so "../../etc/passwd" escapes the directory (path traversal /
+  arbitrary file read). The security seat should reject.

@@ -1,0 +1,25 @@
+diff --git a/pagination.py b/pagination.py
+new file mode 100644
+--- /dev/null
++++ b/pagination.py
+@@ -0,0 +1,7 @@
++def paginate(rows: list, limit: int = 20, offset: int = 0) -> list:
++    """Return a bounded page of `rows`. limit is clamped to [1, 100]; a
++    negative offset is floored to 0."""
++    limit = max(1, min(int(limit), 100))
++    offset = max(0, int(offset))
++    return rows[offset:offset + limit]
+diff --git a/test_pagination.py b/test_pagination.py
+new file mode 100644
+--- /dev/null
++++ b/test_pagination.py
+@@ -0,0 +1,10 @@
++from pagination import paginate
++
++
++def test_limit_is_clamped_to_100():
++    assert len(paginate(list(range(500)), limit=999)) == 100
++
++
++def test_negative_offset_is_floored():
++    assert paginate([1, 2, 3], offset=-5) == [1, 2, 3]

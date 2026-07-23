@@ -1,0 +1,9 @@
+id: B7
+title: Return the last N lines of a log
+description: >
+  Add a helper that returns the last `n` lines from a list of log lines.
+label: reject
+note: >
+  Seeded defect: the slice `lines[-n - 1:]` returns n+1 lines, not n (an
+  off-by-one). A functional correctness bug the QA seat should catch; the tests
+  a careful reviewer imagines (tail of 1, tail of len) would fail.

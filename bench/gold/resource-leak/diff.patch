@@ -1,0 +1,12 @@
+diff --git a/counter.py b/counter.py
+new file mode 100644
+--- /dev/null
++++ b/counter.py
+@@ -0,0 +1,7 @@
++def count_lines(paths: list[str]) -> int:
++    """Return the total number of lines across all `paths`."""
++    total = 0
++    for path in paths:
++        f = open(path)
++        total += sum(1 for _ in f)
++    return total

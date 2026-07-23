@@ -1,0 +1,9 @@
+id: B8
+title: Count the total lines across a set of files
+description: >
+  Add a helper that sums the line counts of every path it is given.
+label: reject
+note: >
+  Seeded defect: each file is opened but never closed (no context manager, no
+  close), leaking a file descriptor per path — it exhausts the fd limit on
+  large inputs. The reviewer should reject in favor of a `with` block.

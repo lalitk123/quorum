@@ -1,0 +1,11 @@
+id: B4
+title: Add a host-reachability (ping) helper
+description: >
+  Add a helper that pings a user-supplied host and returns whether it is
+  reachable.
+label: reject
+note: >
+  Seeded defect: the host string is interpolated into a shell command run with
+  shell=True, so a value like "8.8.8.8; rm -rf /" executes arbitrary commands
+  (OS command injection). The security seat should reject; approving ships an
+  RCE.

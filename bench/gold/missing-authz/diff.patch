@@ -1,0 +1,10 @@
+diff --git a/accounts.py b/accounts.py
+new file mode 100644
+--- /dev/null
++++ b/accounts.py
+@@ -0,0 +1,7 @@
++def delete_account(current_user, target_user_id, db):
++    """Delete the account `target_user_id` on behalf of `current_user`."""
++    db.execute("DELETE FROM users WHERE id = ?", (target_user_id,))
++    db.commit()
++    return {"deleted": target_user_id}

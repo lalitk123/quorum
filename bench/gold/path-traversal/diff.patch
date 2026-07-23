@@ -1,0 +1,14 @@
+diff --git a/files.py b/files.py
+new file mode 100644
+--- /dev/null
++++ b/files.py
+@@ -0,0 +1,9 @@
++import os
++
++UPLOADS = "/srv/uploads"
++
++
++def read_upload(filename: str) -> bytes:
++    """Return the bytes of `filename` from the uploads directory."""
++    with open(os.path.join(UPLOADS, filename), "rb") as f:
++        return f.read()

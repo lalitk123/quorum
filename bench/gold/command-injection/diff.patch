@@ -1,0 +1,13 @@
+diff --git a/net_tools.py b/net_tools.py
+new file mode 100644
+--- /dev/null
++++ b/net_tools.py
+@@ -0,0 +1,8 @@
++import subprocess
++
++
++def ping(host: str) -> bool:
++    """Return True if `host` responds to a single ICMP echo."""
++    result = subprocess.run(
++        f"ping -c 1 {host}", shell=True, capture_output=True)
++    return result.returncode == 0

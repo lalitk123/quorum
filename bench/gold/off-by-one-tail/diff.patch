@@ -1,0 +1,10 @@
+diff --git a/logs.py b/logs.py
+new file mode 100644
+--- /dev/null
++++ b/logs.py
+@@ -0,0 +1,6 @@
++def tail(lines: list[str], n: int) -> list[str]:
++    """Return the last `n` lines."""
++    if n <= 0:
++        return []
++    return lines[-n - 1:]

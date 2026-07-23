@@ -1,0 +1,10 @@
+id: B6
+title: Add an endpoint to delete a user account
+description: >
+  Add a handler that deletes the account with the given id on behalf of the
+  current user.
+label: reject
+note: >
+  Seeded defect: the handler never checks that the caller owns the target
+  account or is an admin, so any authenticated user can delete anyone's account
+  (broken access control / IDOR). The security seat should reject.
