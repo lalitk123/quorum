@@ -143,9 +143,28 @@ async def run_reviewer(spec: SeatSpec, system_prompt: str, material: str,
     # openai-compatible: no file tools, budget-checked around the HTTP call.
     for b in budgets:
         b.precheck()
-    text, usage = await asyncio.to_thread(
-        _post_chat_completion, spec, system_prompt, material)
-    cost = _seat_cost(spec, usage)
-    for b in budgets:
-        b.add(cost)
+
+    def _account(usage: dict) -> None:
+        cost = _seat_cost(spec, usage)
+        for b in budgets:
+            b.add(cost)
+
+    # Run the HTTP call as its own shielded task. If this reviewer is cancelled
+    # mid-flight (early-exit voting forces the gate before this seat votes), the
+    # request is already in flight and OpenAI bills it regardless — a running
+    # thread is not cancellable. So we wait for it and record the cost before
+    # letting the cancellation propagate; otherwise the per-ticket/per-run USD
+    # caps silently under-count real OpenAI spend, which is exactly what they
+    # exist to bound.
+    call = asyncio.ensure_future(
+        asyncio.to_thread(_post_chat_completion, spec, system_prompt, material))
+    try:
+        text, usage = await asyncio.shield(call)
+    except asyncio.CancelledError:
+        try:
+            _, usage = await call
+            _account(usage)
+        finally:
+            raise
+    _account(usage)
     return text

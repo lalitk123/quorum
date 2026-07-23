@@ -8,6 +8,7 @@ the decomposer's dependency validation. Run with: pytest -q
 import pytest
 
 import asyncio
+import time
 
 from agent_team.checks import classify_changed_files, tamper_scan
 from agent_team import council
@@ -270,3 +271,31 @@ async def test_convene_early_exit_cancels_pending_seats(monkeypatch):
     # the slow seats were cancelled, not awaited to completion.
     assert completed == ["security"]
     assert [v.reviewer for v in decision.verdicts] == ["security"]
+
+
+@pytest.mark.asyncio
+async def test_openai_seat_cost_recorded_when_cancelled_midflight(monkeypatch):
+    """Early-exit cancels an in-flight OpenAI seat, but OpenAI still bills the
+    request that is already running in its (un-cancellable) thread. The budget
+    must record that cost, not silently drop it — else the USD caps under-count
+    exactly the spend they exist to bound."""
+    from agent_team import reviewers
+
+    def slow_post(spec, system, user):
+        time.sleep(0.2)                       # the HTTP call OpenAI bills for
+        return "ok", {"prompt_tokens": 1_000_000, "completion_tokens": 0}
+
+    monkeypatch.setattr(reviewers, "_post_chat_completion", slow_post)
+    spec = SeatSpec("openai", "m", has_file_tools=False,
+                    input_price_per_mtok=3.0, output_price_per_mtok=10.0)
+    budget = Budget(None, "run")
+
+    task = asyncio.create_task(
+        reviewers.run_reviewer(spec, "sys", "material", "/tmp", (budget,)))
+    await asyncio.sleep(0.05)                 # let the thread start the request
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # 1M prompt tokens * $3/Mtok = $3.00, recorded despite the cancellation.
+    assert budget.spent == pytest.approx(3.0)
