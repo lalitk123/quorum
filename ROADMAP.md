@@ -230,33 +230,51 @@ methodology + infrastructure, with results that sharpen as the log grows.
   their tokens. Implemented *losslessly*: `_outcome_decided` only short-circuits a
   verdict the full panel would reach anyway, so it needs no calibration; the trade
   is fewer collected objections per rejected round. Deterministic, unit-tested.
+  Cancelling an in-flight `openai`-backend seat does **not** drop its cost: the
+  request is already billed, so it self-accounts against the budget when it
+  returns while the gate propagates the cancellation immediately (non-blocking).
+- **Stability measurement is now spent** (consumes `stability.py`).
+  `reliability.posterior_defect_prob` caps each seat's likelihood ratio at its
+  measured accuracy ceiling — a seat cannot contribute more evidence than its
+  self-consistency permits — and `selection.select_with_repeats` can buy `k`
+  majority-voted self-repeats of a cheap flaky seat instead of one expensive
+  stable seat, priced from the measured flip rate (`selection.max_repeats`).
+  Unit-tested.
+- **Conditional independence** (extends the independence audit). φ is sliceable
+  by a `condition` key (`independence.slice_by`), surfacing seat pairs that share
+  a blind spot on one defect class even when the jury looks decorrelated overall.
+- **Baseline-relative canary alerting.** Canaries record a per-seat baseline
+  catch-rate from the gold sweep and flag a *seat-specific* dissent collapse — a
+  seat that used to catch this case and now doesn't — not just a panel-wide one
+  (`canary.baseline_floor`). Unit-tested.
 - Goal → council-approved DAG decomposition; dependency-aware scheduling;
   stacked PRs; file-overlap locks; human-only merge.
 
 ## Next: reliability
 
-- **Grow the gold set + tune from it.** The measurement harness exists; now grow
-  the corpus toward 30–200 labeled diffs from the real distribution, and use the
-  per-seat κ / detection numbers to weight or re-route seats and set aggregation
-  thresholds empirically rather than by intuition.
-- **Spend the stability measurement.** `stability.py` measures the flip rate and
-  prices the repeats that would fix it; nothing consumes that yet. Two hooks: cap
-  each seat's likelihood ratio in `posterior_defect_prob` at its measured ceiling
-  (a seat cannot contribute more evidence than its consistency permits), and let
-  `selection.py` buy `k` self-repeats of a cheap flaky seat instead of one run of
-  an expensive stable one when that is the better detection-per-dollar trade.
-- **Baseline-relative canary alerting.** Canaries alert today on absolute
-  thresholds (gate approval, dissent floor). Record a per-seat baseline from the
-  gold sweep so a canary can flag a *seat-specific* dissent collapse (a seat that
-  used to catch this case and now doesn't), not just a panel-wide one.
-- **Deeper mutation coverage.** The teeth check ships today as a single
-  source-revert; extend toward per-file mutation and coverage deltas so a
-  partially-tested change is scored, not just pass/fail. Per-operator mutation
-  scores would also give RQ2 the bug-type conditioning it currently has to be
-  told rather than learn.
-- **Conditional independence, not just marginal.** The audit measures φ pooled over
-  all defects. Two seats can look decorrelated overall while failing together on
-  exactly the defect class that matters (auth bugs). Slice φ by `condition`.
+- **Grow the gold set + tune from it — top priority; unblocks RQ2.** The
+  measurement harness exists and a first real `--bench` run landed 15 labeled
+  judgments across 3 gold cases — too few to trust `--reliability` / `--select`
+  (sensitivity CI width ≈ 0.57, and `--select` currently over-fits, recommending
+  a seat that false-rejects clean code). Grow `bench/gold/` toward 30–200 labeled
+  diffs from the real distribution (use `mutation.py` for bulk labeled-bad diffs),
+  then re-derive the per-seat κ / detection numbers and let `--select` right-size
+  the council on real statistical power instead of synthetic numbers. This one
+  item gates both the credible RQ1 numbers and the RQ2 council-shrink.
+- **Populate `mutation_score` in the live trust score.** `worker._build_trust`
+  weights a mutation score it never sets per ticket (only the offline `--mutants`
+  path produces one). Wire a per-ticket mutation pass so the live trust score
+  reflects the signal it already budgets for. Extend the teeth check from a single
+  source-revert toward per-file mutation + coverage deltas so a partially-tested
+  change is scored, not just pass/fail — which also gives RQ2 the bug-type
+  conditioning it currently has to be told rather than learn.
+- **Model-tagged per-seat history.** Reliability, drift, and canary baselines key
+  a seat's history by its *name* only, so swapping a seat's model silently scores
+  the new model against the old one's track record — and can trip a false
+  drift/regression alarm on a deliberate downgrade. Tag each judgment row with the
+  model that produced it and filter history by the seat's current model (the
+  `--evolve` path already records the model; extend the same to reliability/drift/
+  canary reads).
 
 ## Next: scale
 
