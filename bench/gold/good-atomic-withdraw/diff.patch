@@ -1,0 +1,14 @@
+diff --git a/bank_atomic.py b/bank_atomic.py
+new file mode 100644
+--- /dev/null
++++ b/bank_atomic.py
+@@ -0,0 +1,9 @@
++def withdraw(db, account_id: int, amount: int) -> None:
++    """Debit `amount` atomically, only if the account has sufficient funds."""
++    cur = db.execute(
++        "UPDATE accounts SET balance = balance - ? "
++        "WHERE id = ? AND balance >= ?",
++        (amount, account_id, amount))
++    db.commit()
++    if cur.rowcount == 0:
++        raise ValueError("insufficient funds")

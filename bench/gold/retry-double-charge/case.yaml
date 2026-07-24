@@ -1,0 +1,13 @@
+id: B12
+title: Charge a customer with retries on timeout
+description: >
+  Add charge_with_retry() that retries a payment gateway charge when it times
+  out, up to a few attempts.
+label: reject
+note: >
+  Subtle defect: the charge is a non-idempotent operation, and a timeout does
+  not mean it failed — the charge may have succeeded and only the response was
+  lost. Retrying then charges the customer again (double charge). It looks like
+  sensible retry logic; the fix is an idempotency key so the gateway dedupes.
+  The security/architect seats reasoning about at-least-once semantics should
+  reject; a seat pattern-matching "retry = good" may approve.

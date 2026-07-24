@@ -1,0 +1,12 @@
+id: B11
+title: Append an item to a cart
+description: >
+  Add add_item() that appends an item to a cart and returns the cart, defaulting
+  to a new empty cart.
+label: reject
+note: >
+  Subtle defect: the default argument `cart=[]` is evaluated once at definition
+  time, so every call that omits `cart` shares the same list — items leak across
+  unrelated carts/requests. The fix is `cart=None` then `cart = cart or []`. A
+  seat that knows the Python mutable-default gotcha should reject; others may
+  approve a function that "looks fine".

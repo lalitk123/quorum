@@ -1,0 +1,11 @@
+diff --git a/session_expiry.py b/session_expiry.py
+new file mode 100644
+--- /dev/null
++++ b/session_expiry.py
+@@ -0,0 +1,8 @@
++from datetime import datetime, timedelta
++
++
++def is_expired(created_at: datetime, ttl_hours: int) -> bool:
++    """Return True if the token created at `created_at` (UTC) is past its TTL."""
++    return datetime.now() > created_at + timedelta(hours=ttl_hours)

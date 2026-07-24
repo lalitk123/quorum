@@ -1,0 +1,12 @@
+id: G7
+title: Withdraw funds from an account (atomic)
+description: >
+  Add withdraw() that debits an account only when it has sufficient funds.
+label: approve
+note: >
+  Clean control, paired with the race-condition case (B9): it performs a single
+  atomic conditional UPDATE (... WHERE balance >= amount) and checks rowcount,
+  so there is no check-then-act window — concurrent withdrawals cannot overdraw.
+  Approving is correct. This case measures whether a seat can tell the safe,
+  atomic pattern from the unsafe TOCTOU one rather than rejecting anything that
+  touches balances.

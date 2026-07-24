@@ -1,0 +1,18 @@
+diff --git a/net_ping.py b/net_ping.py
+new file mode 100644
+--- /dev/null
++++ b/net_ping.py
+@@ -0,0 +1,12 @@
++import re
++import subprocess
++
++_HOST = re.compile(r"^[a-zA-Z0-9.-]+$")
++
++
++def ping(host: str) -> bool:
++    """Return True if the validated `host` responds to one ICMP echo."""
++    if not _HOST.match(host):
++        raise ValueError("invalid host")
++    result = subprocess.run(
++        ["ping", "-c", "1", host], capture_output=True)
++    return result.returncode == 0

@@ -1,0 +1,12 @@
+id: B10
+title: Split a bill evenly among people
+description: >
+  Add split_bill() that divides a total (in cents) evenly and returns each
+  person's share.
+label: reject
+note: >
+  Subtle defect: money is computed in floating point and rounded per share, so
+  the shares do not sum back to the total (e.g. 1000 cents / 3 -> 3.33 * 3 =
+  9.99, a lost cent), and it returns floats for currency. Correct code divides
+  integer cents and distributes the remainder. A QA/architect seat reasoning
+  about the sum should reject; a seat that only eyeballs it may approve.

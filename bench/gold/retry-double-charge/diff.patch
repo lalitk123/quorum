@@ -1,0 +1,13 @@
+diff --git a/charge.py b/charge.py
+new file mode 100644
+--- /dev/null
++++ b/charge.py
+@@ -0,0 +1,9 @@
++def charge_with_retry(gateway, amount: int, attempts: int = 3):
++    """Charge `amount`, retrying on timeout."""
++    for _ in range(attempts):
++        try:
++            return gateway.charge(amount)
++        except TimeoutError:
++            continue
++    raise RuntimeError("charge failed after retries")

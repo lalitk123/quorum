@@ -1,0 +1,12 @@
+diff --git a/user_search.py b/user_search.py
+new file mode 100644
+--- /dev/null
++++ b/user_search.py
+@@ -0,0 +1,8 @@
++import sqlite3
++
++
++def search_users(db: sqlite3.Connection, name: str) -> list:
++    """Return users whose name matches `name` (bound parameter — safe)."""
++    query = "SELECT id, name FROM users WHERE name LIKE ?"
++    return db.execute(query, (f"%{name}%",)).fetchall()

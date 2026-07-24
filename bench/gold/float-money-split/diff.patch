@@ -1,0 +1,9 @@
+diff --git a/billing_split.py b/billing_split.py
+new file mode 100644
+--- /dev/null
++++ b/billing_split.py
+@@ -0,0 +1,5 @@
++def split_bill(total_cents: int, people: int) -> list[float]:
++    """Return each person's share of the bill, in dollars."""
++    share = round(total_cents / people / 100.0, 2)
++    return [share] * people

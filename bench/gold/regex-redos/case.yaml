@@ -1,0 +1,12 @@
+id: B14
+title: Validate an email address with a regex
+description: >
+  Add is_valid_email() that checks a string matches an example.com address.
+label: reject
+note: >
+  Subtle defect: the pattern `([a-zA-Z0-9]+)+@example\.com$` has nested
+  quantifiers that backtrack catastrophically. An input like a long run of
+  letters followed by a non-matching char takes exponential time (ReDoS), so a
+  single request can pin a CPU — a denial-of-service on untrusted input. The fix
+  is a linear pattern (drop the nested `+`). A security seat that recognizes
+  catastrophic backtracking should reject; others see "just a regex".

@@ -1,0 +1,15 @@
+diff --git a/bank.py b/bank.py
+new file mode 100644
+--- /dev/null
++++ b/bank.py
+@@ -0,0 +1,9 @@
++def withdraw(db, account_id: int, amount: int) -> None:
++    """Debit `amount` from the account if it has sufficient funds."""
++    row = db.execute(
++        "SELECT balance FROM accounts WHERE id = ?", (account_id,)).fetchone()
++    if row[0] < amount:
++        raise ValueError("insufficient funds")
++    db.execute(
++        "UPDATE accounts SET balance = balance - ? WHERE id = ?",
++        (amount, account_id))
++    db.commit()

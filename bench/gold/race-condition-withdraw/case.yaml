@@ -1,0 +1,13 @@
+id: B9
+title: Withdraw funds from an account
+description: >
+  Add a withdraw() that checks the balance is sufficient and then debits the
+  account.
+label: reject
+note: >
+  Subtle defect: check-then-act is not atomic. The SELECT balance check and the
+  UPDATE debit are separate statements with no lock or conditional update, so
+  two concurrent withdrawals can both pass the check and overdraw the account
+  (TOCTOU race / double-spend). The fix is a single conditional UPDATE (... WHERE
+  balance >= amount) or a row lock. Single-threaded tests pass, so weaker seats
+  approve — the architect/security seats should catch the concurrency hole.

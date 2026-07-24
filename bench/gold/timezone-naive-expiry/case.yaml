@@ -1,0 +1,13 @@
+id: B13
+title: Check whether a session token has expired
+description: >
+  Add is_expired() that returns whether a token created at a given time is past
+  its TTL.
+label: reject
+note: >
+  Subtle defect: the token is stamped elsewhere with datetime.utcnow() (naive
+  UTC) but compared here against datetime.now() (naive local time). The two
+  differ by the machine's UTC offset, so tokens expire hours early or late — a
+  security-relevant correctness bug (sessions that outlive their TTL). The fix
+  is a single timezone-aware clock on both sides. Subtle enough that seats not
+  tracking the utcnow/now mismatch will approve.
