@@ -42,6 +42,8 @@ class Selection:
     detection: float                      # P(the team catches a defect)
     cost: float
     steps: list[dict] = field(default_factory=list)   # audit trail of the greedy adds
+    specificity: float = 1.0              # P(the team approves a clean diff)
+    detection_target_met: bool = True     # False if a specificity floor blocked it
 
 
 def for_condition(judgments, **conds) -> list[dict]:
@@ -62,10 +64,26 @@ def team_detection(seats, model: dict[str, SeatReliability],
     return 1.0 - p_miss
 
 
+def team_specificity(seats, model: dict[str, SeatReliability],
+                     default_spec: float = 0.5, conservative: bool = False) -> float:
+    """P(the team approves a clean diff) under a unanimous gate: every seat must
+    approve, so a clean change survives only if no seat cries wolf. This is the
+    counterweight to `team_detection` — adding a seat can only raise detection but
+    can only lower specificity, so selecting on detection alone piles on
+    wolf-crying seats. `Π specificity_i` (matches the fail-closed pre-push gate,
+    where a single reject sinks the change)."""
+    p_approve_all = 1.0
+    for s in seats:
+        r = model.get(s)
+        spec = default_spec if r is None else (r.spec_lo if conservative else r.spec_mean)
+        p_approve_all *= min(max(spec, 0.0), 1.0)
+    return p_approve_all
+
+
 def select_reviewers(model: dict[str, SeatReliability], costs: dict[str, float] | None = None,
                      target_detection: float = 0.95, budget: float | None = None,
                      default_cost: float = 1.0, conservative: bool = False,
-                     joint=None) -> Selection:
+                     joint=None, target_specificity: float | None = None) -> Selection:
     """Greedy min-cost council reaching `target_detection` (or best under `budget`).
 
     `joint` is an optional `seats -> detection | None` callable (see
@@ -74,6 +92,14 @@ def select_reviewers(model: dict[str, SeatReliability], costs: dict[str, float] 
     product — so two seats that miss the same defects stop looking additive. It
     returns `None` for subsets with too little joint data, and we fall back to the
     independence model for those, recording which estimator decided each step.
+
+    `target_specificity` (optional) makes selection two-objective: a seat is only
+    eligible if adding it keeps the team's specificity (`Π specificity_i`, the
+    unanimous-gate approve-clean probability) at or above the floor. Without it the
+    greedy optimizes detection alone and will happily add a high-recall seat that
+    false-rejects half of clean diffs (measured: a 98%-sensitivity / 50%-specificity
+    seat is picked to hit the detection target while doubling alert fatigue). The
+    floor keeps the recommended council from being a wolf-crier.
 
     To let the greedy also *buy self-repeats* of a cheap flaky seat (majority-voting
     one seat `k` times to raise its effective sensitivity), see
@@ -94,6 +120,9 @@ def select_reviewers(model: dict[str, SeatReliability], costs: dict[str, float] 
             c = costs.get(s, default_cost) or default_cost
             if budget is not None and cost + c > budget + 1e-9:
                 continue
+            if target_specificity is not None and team_specificity(
+                    chosen + [s], model, conservative=conservative) < target_specificity - 1e-9:
+                continue                              # would make the council cry wolf
             new_det, source = None, "measured"
             if joint is not None:
                 new_det = joint(chosen + [s])
@@ -116,7 +145,9 @@ def select_reviewers(model: dict[str, SeatReliability], costs: dict[str, float] 
         steps.append({"seat": best["seat"], "detection": round(detection, 4),
                       "marginal_per_dollar": round(best["score"], 4),
                       "estimator": best["source"]})
-    return Selection(chosen, detection, cost, steps)
+    return Selection(chosen, detection, cost, steps,
+                     specificity=team_specificity(chosen, model, conservative=conservative),
+                     detection_target_met=detection >= target_detection - 1e-12)
 
 
 def select_with_repeats(model: dict[str, SeatReliability],
@@ -124,7 +155,7 @@ def select_with_repeats(model: dict[str, SeatReliability],
                         costs: dict[str, float] | None = None,
                         target_detection: float = 0.95, budget: float | None = None,
                         default_cost: float = 1.0, conservative: bool = False,
-                        max_repeats: int = 5) -> Selection:
+                        max_repeats: int = 5, target_specificity: float | None = None) -> Selection:
     """Greedy selection that can *buy majority-voted self-repeats* of a flaky seat.
 
     This is the consumer of `stability.py`'s pricing: a stochastic seat cannot have
@@ -172,6 +203,9 @@ def select_with_repeats(model: dict[str, SeatReliability],
             c = costs.get(s, default_cost) or default_cost
             if budget is not None and cost + c > budget + 1e-9:
                 continue
+            if target_specificity is not None and team_specificity(
+                    order + [s], model, conservative=conservative) < target_specificity - 1e-9:
+                continue                              # would make the council cry wolf
             new_det = max(1.0 - (1.0 - detection) * (1.0 - eff(s, 1)), detection)
             score = (new_det - detection) / c
             if best is None or score > best["score"]:
@@ -201,7 +235,9 @@ def select_with_repeats(model: dict[str, SeatReliability],
         steps.append({"seat": s, "repeats": reps[s], "detection": round(detection, 4),
                       "marginal_per_dollar": round(best["score"], 4),
                       "estimator": "repeat" if best["kind"] == "repeat" else "independence"})
-    return Selection(order, detection, cost, steps)
+    return Selection(order, detection, cost, steps,
+                     specificity=team_specificity(order, model, conservative=conservative),
+                     detection_target_met=detection >= target_detection - 1e-12)
 
 
 def recall_per_dollar(model: dict[str, SeatReliability],
@@ -219,8 +255,12 @@ def format_selection(sel: Selection, model: dict[str, SeatReliability]) -> str:
     if not sel.seats:
         return "\n".join(lines + ["  (no seats selected — empty reliability model)"])
     lines.append(f"  selected: {', '.join(sel.seats)}")
-    lines.append(f"  team detection P(catch defect) = {sel.detection:.1%}  "
+    lines.append(f"  team detection   P(catch defect)  = {sel.detection:.1%}  "
                  f"at cost {sel.cost:g}")
+    lines.append(f"  team specificity P(approve clean) = {sel.specificity:.1%}")
+    if not sel.detection_target_met:
+        lines.append("  note: detection target not reached — the specificity floor "
+                     "blocked the seats that would have met it (they cry wolf too often).")
     lines.append("  greedy trail (seat: cumulative detection, marginal/$, estimator):")
     for st in sel.steps:
         reps = st.get("repeats", 1)
@@ -236,7 +276,8 @@ def format_selection(sel: Selection, model: dict[str, SeatReliability]) -> str:
 def recommend_council(judgments, costs: dict[str, float] | None = None,
                       target_detection: float = 0.95, budget: float | None = None,
                       empirical: bool = True, conservative: bool = False,
-                      max_repeats: int = 1, **conds) -> Selection:
+                      max_repeats: int = 1, target_specificity: float | None = None,
+                      **conds) -> Selection:
     """End-to-end: estimate reliability (optionally condition-sliced) then select.
 
     `empirical=True` (default) measures each candidate subset's joint detection from
@@ -253,10 +294,12 @@ def recommend_council(judgments, costs: dict[str, float] | None = None,
                       for s, st in seat_stability(rows, label="defect").items()
                       if st.observed}
         return select_with_repeats(model, flip_rates, costs, target_detection, budget,
-                                   conservative=conservative, max_repeats=max_repeats)
+                                   conservative=conservative, max_repeats=max_repeats,
+                                   target_specificity=target_specificity)
     joint = None
     if empirical:
         from .independence import make_empirical_detector
         joint = make_empirical_detector(rows, conservative=conservative)
     return select_reviewers(model, costs, target_detection, budget,
-                            conservative=conservative, joint=joint)
+                            conservative=conservative, joint=joint,
+                            target_specificity=target_specificity)

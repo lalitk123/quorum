@@ -135,6 +135,8 @@ def main() -> None:
         target = float(sel_cfg.get("target_detection", 0.95))
         budget = sel_cfg.get("budget")
         max_repeats = int(sel_cfg.get("max_repeats", 1))
+        ts = sel_cfg.get("target_specificity")
+        target_specificity = float(ts) if ts is not None else None
         if max_repeats > 1:
             # Let the selector buy majority-voted self-repeats of a cheap flaky seat,
             # priced from its measured repeat-run flip rate (spends stability.py).
@@ -143,11 +145,12 @@ def main() -> None:
                           if st.observed}
             sel = selection.select_with_repeats(
                 model, flip_rates=flip_rates, costs=costs, target_detection=target,
-                budget=budget, max_repeats=max_repeats)
+                budget=budget, max_repeats=max_repeats, target_specificity=target_specificity)
         else:
             sel = selection.select_reviewers(
                 model, costs=costs, target_detection=target, budget=budget,
-                joint=independence.make_empirical_detector(rows))
+                joint=independence.make_empirical_detector(rows),
+                target_specificity=target_specificity)
         print(selection.format_selection(sel, model))
         return
 

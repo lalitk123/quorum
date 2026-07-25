@@ -160,3 +160,56 @@ def test_repeat_steps_are_recorded_in_the_audit_trail():
     repeats = [s["repeats"] for s in sel.steps]
     assert "repeat" in estimators                  # at least one repeat purchase
     assert repeats == sorted(repeats)              # repeats grow monotonically (1,3,5)
+
+
+# ---- specificity floor (two-objective selection) -----------------------------
+
+def _seat2(name, sens, spec):
+    """A seat with independently controllable sensitivity and specificity."""
+    return SeatReliability(name, sens, sens, sens, 50, spec, spec, spec, 50)
+
+
+def _model2(**seats):
+    return {name: _seat2(name, s, sp) for name, (s, sp) in seats.items()}
+
+
+def test_specificity_floor_prefers_high_specificity_seat_over_wolf_crier():
+    # `wolf` wins on detection-per-dollar (higher sensitivity) but false-rejects
+    # half of clean diffs; `solid` catches nearly as much and rarely cries wolf.
+    m = _model2(wolf=(0.98, 0.50), solid=(0.95, 0.90))
+    # Detection-only picks the wolf-crier — the bug this floor fixes.
+    plain = select_reviewers(m, target_detection=0.90)
+    assert plain.seats == ["wolf"]
+    # With a floor, the wolf is ineligible (0.50 < 0.80) and `solid` is chosen —
+    # same detection target met, far better specificity.
+    floored = select_reviewers(m, target_detection=0.90, target_specificity=0.80)
+    assert floored.seats == ["solid"]
+    assert floored.detection_target_met
+    assert floored.specificity == pytest.approx(0.90)
+
+
+def test_specificity_floor_can_block_the_detection_target_and_flags_it():
+    # `good` clears the floor but can't reach the detection target alone; the only
+    # seat that would (noisy) drops team specificity below the floor, so it is
+    # refused and the target is reported as not met rather than silently adding a
+    # wolf-crier.
+    m = _model2(good=(0.70, 0.85), noisy=(0.90, 0.50))
+    sel = select_reviewers(m, target_detection=0.95, target_specificity=0.80)
+    assert sel.seats == ["good"]
+    assert not sel.detection_target_met
+    assert sel.detection == pytest.approx(0.70)
+    assert sel.specificity == pytest.approx(0.85)
+
+
+def test_no_specificity_floor_is_backward_compatible():
+    m = _model2(wolf=(0.98, 0.50), solid=(0.95, 0.90))
+    # Default (None) keeps the old detection-only behavior exactly.
+    assert select_reviewers(m, target_detection=0.90).seats == ["wolf"]
+
+
+def test_specificity_floor_applies_to_repeat_selection_too():
+    # The repeats path gates new-seat additions on the same floor.
+    m = _model2(wolf=(0.98, 0.50), solid=(0.95, 0.90))
+    sel = select_with_repeats(m, target_detection=0.90, max_repeats=5,
+                              target_specificity=0.80)
+    assert sel.seats == ["solid"]

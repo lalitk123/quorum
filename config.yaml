@@ -122,6 +122,12 @@ independence:
 
 selection:
   target_detection: 0.95       # required P(the team catches a real defect)
+  target_specificity:          # optional floor on P(the team approves a clean diff);
+                               # selection stays two-objective when set — a seat is
+                               # only added if the council still clears this floor, so
+                               # a high-recall/low-specificity "wolf-crier" seat is not
+                               # chosen just to hit target_detection. null = detection-
+                               # only (a seat that false-rejects clean code can be picked).
   seat_costs: {}               # optional per-seat USD cost; uniform if omitted
   budget:                      # optional hard cost cap (null = none)
   max_repeats: 1               # >1 lets the selector buy k majority-voted self-
