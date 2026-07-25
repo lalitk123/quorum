@@ -155,10 +155,25 @@ python main.py --reliability    # prints the current per-seat model
 ```
 === Reviewer reliability (Bayesian, from labeled judgments) ===
   seat          sensitivity[90% CI] (n_def)   specificity[90% CI] (n_clean)
-  product        50% [ 28- 72] (n=12)        96% [ 85-100] (n=12)
-  security       96% [ 85-100] (n=12)        96% [ 85-100] (n=12)
-  adversary      96% [ 85-100] (n=12)        73% [ 52- 90] (n=12)
+  security       76% [ 61- 89] (n=22)        81% [ 61- 95] (n=12)
+  adversary      89% [ 77- 97] (n=22)        65% [ 43- 85] (n=12)
+  architect      98% [ 92-100] (n=22)        88% [ 72- 99] (n=12)
+  qa             98% [ 92-100] (n=22)        27% [ 10- 48] (n=12)
+  product        98% [ 92-100] (n=22)        50% [ 28- 72] (n=12)
 ```
+
+These are **measured** on the current 20-case gold corpus (`bench/gold/`, 130
+labeled judgments across the five seats), not planted — and the seats are
+genuinely different instruments. `architect` is the strongest (98% sensitivity,
+88% specificity); `security` trades sensitivity (76% — it misses subtle *non*-
+security logic bugs) for caution; and `qa` catches nearly every defect (98%) yet
+blocks clean code far too often (**27% specificity**) — a concrete, seat-specific
+target for prompt work, not a vague quality complaint. That spread is the whole
+point of weighting: on this corpus, reliability-weighted aggregation classified
+**19 of 20 cases correctly where the naive unanimous gate got only 13** — the gate
+rejected all seven clean changes because one crying-wolf seat sank each, while the
+posterior discounted those seats and recovered six of them. (Small corpus, wide
+CIs — the contribution is the method; the numbers sharpen as the log grows.)
 
 Those estimates then drive **calibrated aggregation** (`reliability.py`): instead
 of `3-of-5 approve`, the posterior `P(defect | votes)` weights each seat by its
@@ -180,44 +195,40 @@ overconfident, and make the selector believe a near-clone bought fresh coverage,
 so it recommends a council that is **too small**.
 
 Since every seat reviews every case, the judgment log already contains the full
-**joint** outcome distribution — the approximation was never necessary. The run
-below is *illustrative*, on a synthetic 60-case log with a deliberately planted
-clone pair; real numbers require a real corpus:
+**joint** outcome distribution — the approximation was never necessary. Measured
+on the current 20-case corpus:
 
 ```console
 $ python main.py --independence
 === Independence audit (is the jury really decorrelated?) ===
   full council ['adversary', 'architect', 'product', 'qa', 'security']
-    independence model predicts P(detect) = 98.8%
-    measured from the joint          = 97.5% (90% CI lower bound 93.7%, n=60)
-    inflation (predicted - measured) = +1.3%   <-- independence holds well
+    independence model predicts P(detect) = 100.0%
+    measured from the joint          = 96.4% (90% CI lower bound 86.5%, n=13)
+    inflation (predicted - measured) = +3.6%   <-- mildly optimistic
 
-  mean pairwise φ = 0.12   design effect = 1.50
-  5 seats are worth 3.3 independent ones (evidence discount 0.67)
-
-  pair                     φ    joint-miss (obs vs indep)   P(b catches | a misses)
-  architect + product    +0.83    53% vs 33% (!)           9%
-  adversary + security   +0.23    12% vs 7%               59%
-  ...
-  adversary + product    -0.42    7% vs 16%               76%
+  mean pairwise φ = 0.00   design effect = 1.00
+  5 seats are worth 5.0 independent ones (evidence discount 1.00)
 ```
 
-Read that bottom table, not the top line. `architect + product` miss the same
-defects (φ = +0.83) and share a blind spot 53% of the time where independence
-predicts 33% — and when `architect` misses a defect, `product` catches it only
-**9%** of the time. It does not cover for it. Meanwhile `adversary + product` are
-genuinely complementary (φ = −0.42).
+On this corpus the result is a *clean bill of health*: mean φ ≈ 0, design effect
+1.0, only +3.6% inflation. Even though `security` misses ~30% of the subtle
+defects, no *two* seats miss the same one — the misses are spread across seats, so
+the heterogeneous jury genuinely decorrelates on detection. That is the design goal
+met, and the point is that it is now **measured, not assumed**.
 
-The full-council inflation looks harmless (+1.3%) only because five-seat detection
-saturates near 100%. On the *subsets the selector actually evaluates* the same data
-gives `architect + product`: **predicted 67.1%, measured 46.7% — a +20.4% overstatement.**
-The error hides exactly where it does damage. So `selection.py` now scores each
-candidate subset against its measured joint detection, and
-`reliability.posterior_defect_prob` takes a Kish design-effect `discount` that
-shrinks a correlated panel's evidence to its *effective* number of independent
-seats — two perfect clones rejecting now persuade exactly as much as one seat, not
-twice as much. Where joint data is too thin, it falls back to the independence
-product and labels the step as such rather than pretending.
+The audit earns its keep because that will not always hold. When a corpus surfaces
+a correlated pair, the same table flags it: a positive φ, a joint-miss rate above
+what independence predicts, and a low `P(b catches | a misses)` — a seat that does
+not cover for its neighbour. The danger is specific: full-council inflation stays
+small only because five-seat detection saturates near 100%, so correlation would
+hide on exactly the **small subsets the reviewer selector evaluates**, where
+detection does not saturate. So `selection.py` scores each candidate subset against
+its measured joint detection, and `reliability.posterior_defect_prob` takes a Kish
+design-effect `discount` that shrinks a correlated panel's evidence to its
+*effective* number of independent seats — two perfect clones rejecting persuade as
+much as one seat, not twice. Where joint data is too thin it falls back to the
+independence product and labels the step as such rather than pretending. *(On 13
+defect cases this joint estimate is still thin; it sharpens as the corpus grows.)*
 
 ## Does a reviewer even *have* an accuracy? (repeat-run stability)
 
@@ -240,35 +251,34 @@ across defect cases, apply Jensen's inequality, and a hard bound falls out:
 
 It is distribution-free, and it bounds every accuracy number this platform reports.
 A reviewer that flips 32% of its re-runs cannot have sensitivity above 80%, however
-well it scored on a single pass. The run below is *illustrative*, on a synthetic log
-where `architect` was planted to look strong on the once-judged gold set and be a
-coin flip on the re-run canaries:
+well it scored on a single pass. Measured on the 11 cases that have been judged
+twice:
 
 ```console
 $ python main.py --stability
 === Repeat-run stability (test-retest) ===
   seat          flip rate [90% CI]   pairs   kappa   ceiling   runs@5%
-  architect      55% [ 52- 60]        60   -0.10     50%     never  (!) f>1/2: chance
-  product        53% [ 42- 62]        60   -0.11     50%     never  (!) f>1/2: chance
-  qa             47% [ 33- 58]        60    0.06     63%        55
-  adversary      23% [ 10- 38]        60    0.08~    87%         5
-  security       10% [  0- 20]        60   -0.05~    95%         3
+  security       12% [  0- 29]        17    0.75     94%         3
+  product         6% [  0- 18]        17    0.82     97%         3
+  architect       0% [  0-  0]        17    1.00    100%         1
+  qa              0% [  0-  0]        17    1.00~   100%         1
+  adversary       0% [  0-  0]        17    1.00    100%         1
 
-  Note: reported accuracy is above even the most generous ceiling the flip data allows:
-     architect  sensitivity reported 61% vs ceiling 50% from a 55% flip rate [+10.9 pts]
-     This seat's apparent competence lives in cases it was never asked twice.
+  No seat's reported accuracy exceeds its consistency ceiling.
 ```
 
-`--reliability` rates `architect` at 61% sensitivity and the Bayesian aggregation
-duly weights its vote. Stability says the verdict is **irreproducible**: it
-contradicts itself on 55% of re-runs, which is what a coin does. The decision that
-follows is categorical — retire or re-route the seat — not a 0.61 weight.
+The result is itself a finding: the two **OpenAI** seats are the only stochastic
+ones (`security` flips 12% of re-runs, `product` 6%), while the three **Claude**
+seats reproduce every verdict exactly (0% flip). No seat's reported accuracy exceeds
+its ceiling, so `--stability` exits 0 here — but the check has teeth: a seat whose
+accuracy's *lower* credible bound still cleared its flip-rate ceiling would fail the
+command, a contradiction no estimation noise can manufacture.
 
-`runs@5%` prices the flakiness: how many self-repeats, majority-voted, drive the
-flip rate under 5%. `security` needs 3; `adversary` needs 5; `architect` says
-**never**, and that is exact rather than pessimistic — the majority of `k` fair
-coins is still a fair coin. That converts "this seat is flaky" into a line item
-RQ2's cost model can act on.
+`runs@5%` prices the flakiness: how many self-repeats, majority-voted, drive the flip
+rate under 5%. `security` and `product` each need 3; the deterministic Claude seats
+need 1. And the bound is exact at the pathological end — a seat that flipped >½ of its
+re-runs would report `never`, since the majority of `k` fair coins is still a fair
+coin. That converts "this seat is flaky" into a line item RQ2's cost model can act on.
 
 Two details the arithmetic forces. Pairs drawn from one case share that case's `p`,
 so a Beta interval over pairs would be too narrow; the CI is a **cluster bootstrap
