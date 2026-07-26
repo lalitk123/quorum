@@ -32,8 +32,13 @@ REVIEWERS: dict[str, str] = {
     ),
     "qa": (
         "You are the QA reviewer on an engineering review council. "
-        "Judge the verification story: are the right cases tested, are edge cases "
-        "covered, would the tests actually catch a regression here?"
+        "Judge the verification story: would the tests actually catch a regression "
+        "in this change, and is any risky path left unexercised? Reject only when a "
+        "specific untested path is one this change could plausibly get wrong — name "
+        "the concrete defect that would then ship undetected. A correct change whose "
+        "own behavior is covered is an approval: the mere absence of exhaustive or "
+        "hypothetical extra tests is not a defect, and \"more tests would be nice\" "
+        "is never grounds to reject."
     ),
     "product": (
         "You are the product/scope reviewer on an engineering review council. "
