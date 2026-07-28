@@ -155,25 +155,39 @@ python main.py --reliability    # prints the current per-seat model
 ```
 === Reviewer reliability (Bayesian, from labeled judgments) ===
   seat          sensitivity[90% CI] (n_def)   specificity[90% CI] (n_clean)
-  security       76% [ 61- 89] (n=22)        81% [ 61- 95] (n=12)
-  adversary      89% [ 77- 97] (n=22)        65% [ 43- 85] (n=12)
-  architect      98% [ 92-100] (n=22)        88% [ 72- 99] (n=12)
-  qa             98% [ 92-100] (n=22)        27% [ 10- 48] (n=12)
-  product        98% [ 92-100] (n=22)        50% [ 28- 72] (n=12)
+  security       75% [ 55- 91] (n=13)        81% [ 56- 97] (n=7)
+  adversary      89% [ 74- 99] (n=13)        69% [ 41- 91] (n=7)
+  architect      96% [ 87-100] (n=13)        69% [ 41- 91] (n=7)
+  qa             96% [ 87-100] (n=13)        44% [ 17- 72] (n=7)
+  product        96% [ 87-100] (n=13)        56% [ 28- 83] (n=7)
 ```
 
-These are **measured** on the current 20-case gold corpus (`bench/gold/`, 130
-labeled judgments across the five seats), not planted — and the seats are
-genuinely different instruments. `architect` is the strongest (98% sensitivity,
-88% specificity); `security` trades sensitivity (76% — it misses subtle *non*-
-security logic bugs) for caution; and `qa` catches nearly every defect (98%) yet
-blocks clean code far too often (**27% specificity**) — a concrete, seat-specific
-target for prompt work, not a vague quality complaint. That spread is the whole
-point of weighting: on this corpus, reliability-weighted aggregation classified
-**19 of 20 cases correctly where the naive unanimous gate got only 13** — the gate
-rejected all seven clean changes because one crying-wolf seat sank each, while the
-posterior discounted those seats and recovered six of them. (Small corpus, wide
-CIs — the contribution is the method; the numbers sharpen as the log grows.)
+These are **measured** on the 20-case gold corpus (`bench/gold/`, 100 labeled
+judgments across the five seats), not planted — and the seats are genuinely
+different instruments. `security` trades sensitivity (75% — it misses subtle
+*non*-security logic bugs) for caution; `qa` and `product` catch nearly every
+defect (96%) but block clean code far more often. That spread is the whole point
+of weighting: on this corpus, reliability-weighted aggregation classified **19 of
+20 cases correctly where the naive unanimous gate got only 15** — the gate
+rejected five of the seven clean changes because one crying-wolf seat sank each,
+while the posterior discounted those seats and recovered them. (Small corpus,
+wide CIs — the contribution is the method; the numbers sharpen as the log grows.)
+
+**The loop closes on itself.** These per-seat numbers are not just a report card;
+they are a work queue. An earlier run measured `qa` at **27% specificity** against
+98% sensitivity — it caught essentially every defect and blocked most clean code
+too, which is a prompt defect, precisely located. Its persona had framed the job
+as three open-ended "is it tested enough?" questions, and a model can always
+answer *no* by imagining an untested edge case. Rewriting it to reject only when
+an untested path maps to a **concrete defect that would ship** — with "more tests
+would be nice" explicitly barred as grounds — moved `qa` to **44% specificity
+with sensitivity unchanged at 96%**: on the same clean cases it went from
+approving 1 of 7 to 3 of 7, giving up no defect detection. The residual false
+rejects now cluster on genuinely arguable cases (a money-withdrawal and a SQL
+endpoint merged with *zero* tests), and at n=7 clean the interval is far too wide
+to justify tuning further — the next honest step is more corpus, not more prompt.
+That is the intended cycle: measure a seat, fix what the measurement names,
+re-measure, and stop when the data can no longer tell you anything.
 
 Those estimates then drive **calibrated aggregation** (`reliability.py`): instead
 of `3-of-5 approve`, the posterior `P(defect | votes)` weights each seat by its
@@ -251,8 +265,9 @@ across defect cases, apply Jensen's inequality, and a hard bound falls out:
 
 It is distribution-free, and it bounds every accuracy number this platform reports.
 A reviewer that flips 32% of its re-runs cannot have sensitivity above 80%, however
-well it scored on a single pass. Measured on the 11 cases that have been judged
-twice:
+well it scored on a single pass. Measured over 17 repeat pairs — a seat judging the
+same case on two separate `--bench` runs (this needs a corpus with repeat
+observations; a single-pass log reports "all single-pass" and collects none):
 
 ```console
 $ python main.py --stability
