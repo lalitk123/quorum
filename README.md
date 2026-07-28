@@ -14,8 +14,11 @@ trustworthy, auditable, fail-closed *review gate* they must pass.
 > **This spends real money and writes real code.** Every gate runs five reviewer
 > agents, and a worker is gated twice — so a single ticket is ~10 model calls on
 > top of the worker's own. A 20-case benchmark run costs roughly **$8** at the
-> configured models. Set `budget.per_ticket_usd` / `budget.per_run_usd` in
-> `config.yaml` before your first run; a tripped budget fails closed.
+> configured models. Quorum ships with deliberately low caps
+> (`budget.per_ticket_usd: 3`, `per_run_usd: 15`) so a first run cannot surprise
+> you; a tripped budget fails closed. Raise them once you have seen what your
+> own goals cost. Seat credentials are verified *before* the first token is
+> spent, so a missing key aborts for free rather than after a full run.
 >
 > Quorum ships with **`dry_run: true`**, which stops workers after council
 > approval — nothing is pushed and no PR is opened. Setting `dry_run: false`

@@ -60,6 +60,45 @@ class SeatSpec:
     output_price_per_mtok: float | None = None
 
 
+class SeatCredentialsMissing(RuntimeError):
+    """A configured seat cannot authenticate. Raised before any spend."""
+
+
+def check_seat_credentials(cfg: dict, seat_names) -> None:
+    """Verify every configured seat can authenticate, before the run starts.
+
+    Without this the failure is silent and expensive rather than loud and free.
+    A seat that cannot reach its backend errors on every review, and an errored
+    seat fails *closed* — it votes reject. That is correct behaviour in
+    isolation and disastrous as a first-run experience: the plan gate is
+    majority, so the Claude seats still pass it, but the pre-push gate is
+    unanimous, so a permanently-rejecting seat blocks every diff forever. The
+    run then spends real money watching the worker revise good code against
+    objections that were never real, and finally escalates every ticket. The
+    symptom ("the council rejects everything") points at the council, which is
+    the wrong place to look.
+
+    So: check the cheap, deterministic precondition up front and refuse to start.
+    """
+    missing: list[str] = []
+    for name in seat_names:
+        spec = resolve_seat((cfg.get("council_models") or {}).get(name),
+                            cfg.get("council_model", "sonnet"))
+        if spec.backend != "claude" and not os.environ.get(spec.api_key_env or ""):
+            missing.append(f"  - seat '{name}' -> {spec.model} needs ${spec.api_key_env}")
+    if missing:
+        raise SeatCredentialsMissing(
+            "these council seats cannot authenticate, so they would reject every "
+            "review and block the unanimous pre-push gate forever:\n"
+            + "\n".join(missing)
+            + "\n\nFix either way:\n"
+              "  1. export the missing key(s), or\n"
+              "  2. route the seat back to Claude — delete it from `council_models` "
+              "in your config, or set it to a bare model string like `sonnet`.\n"
+              "Nothing has been spent."
+        )
+
+
 def resolve_seat(spec: object, default_model: str) -> SeatSpec:
     """Normalize a per-seat config value into a SeatSpec.
 

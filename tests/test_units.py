@@ -16,6 +16,7 @@ from agent_team.council import _outcome_decided, _review_one
 from agent_team.decomposer import _parse_tickets
 from agent_team import models
 from agent_team.models import CouncilDecision, Verdict
+from agent_team import reviewers
 from agent_team.reviewers import SeatSpec, _seat_cost, resolve_seat
 from agent_team.runner import Budget, BudgetExceeded, extract_json_block
 from agent_team.workspace import Workspace
@@ -391,3 +392,54 @@ def test_decomposer_rejects_an_unsafe_id_as_revision_feedback():
     out = _parse_tickets(
         '{"tickets":[{"id":"../../etc/cron.d/x","title":"t","description":"d"}]}')
     assert isinstance(out, str) and "not allowed" in out
+
+
+# ---- Seat credential pre-flight ---------------------------------------------
+# A seat that cannot authenticate errors on every review, and an errored seat
+# fails closed (reject). Correct in isolation, ruinous as a first run: the
+# majority plan gate still passes, the unanimous push gate never does, and the
+# run pays to watch a worker revise good code against objections that were
+# never real. Catch it free, before anything is spent.
+
+def _cfg(**council_models):
+    return {"council_model": "sonnet", "council_models": council_models}
+
+
+def _openai_seat(env="OPENAI_API_KEY"):
+    return {"backend": "openai", "model": "gpt-5.1", "api_key_env": env}
+
+
+def test_missing_seat_key_is_caught_before_any_spend(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(reviewers.SeatCredentialsMissing) as exc:
+        reviewers.check_seat_credentials(
+            _cfg(security=_openai_seat(), product=_openai_seat()),
+            ["architect", "security", "qa", "product", "adversary"])
+    msg = str(exc.value)
+    assert "security" in msg and "product" in msg      # names the offending seats
+    assert "OPENAI_API_KEY" in msg                     # names the missing variable
+    assert "Nothing has been spent" in msg             # states the cost so far
+
+
+def test_present_key_passes(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    reviewers.check_seat_credentials(_cfg(security=_openai_seat()),
+                                     ["architect", "security"])
+
+
+def test_all_claude_council_needs_no_external_key(monkeypatch):
+    """The default config must not require a key the user may not have."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    reviewers.check_seat_credentials(_cfg(adversary="opus"),
+                                     ["architect", "adversary", "qa"])
+
+
+def test_shipped_config_budget_caps_are_conservative():
+    """Defaults are a stranger's first run, not a power user's ceiling."""
+    import pathlib
+    import yaml
+    cfg = yaml.safe_load(
+        (pathlib.Path(__file__).parent.parent / "config.yaml").read_text())
+    assert cfg["budget"]["per_ticket_usd"] <= 5
+    assert cfg["budget"]["per_run_usd"] <= 20
+    assert cfg["dry_run"] is True            # never ship pushing-by-default

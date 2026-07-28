@@ -81,8 +81,10 @@ verify:
 # Hard cost ceilings (USD), tracked from real per-session API cost. A tripped
 # budget escalates fail-closed and preserves the worktree. Omit a key = no cap.
 budget:
-  per_ticket_usd: 10
-  per_run_usd: 100
+  per_ticket_usd: 3     # a ticket is ~10 gated council calls plus the worker's own;
+                        # measured ~$1.20 per council review on the shipped gold set
+  per_run_usd: 15       # deliberately low so a first run cannot surprise you. Raise
+                        # both once you have seen what your goals actually cost.
 
 # Canary diffs — verify the verifier. Periodically slip a known-bad gold case
 # into the LIVE review stream and alert if the council approves it (a seeded

@@ -9,6 +9,7 @@ from agent_team.bench import run_bench
 from agent_team.canary import run_canary_sweep
 from agent_team.decomposer import DecompositionRejected
 from agent_team.orchestrator import run
+from agent_team.reviewers import SeatCredentialsMissing
 from agent_team.runner import BudgetExceeded
 
 
@@ -94,7 +95,11 @@ def main() -> None:
         cfg = yaml.safe_load(f)
 
     if args.bench is not None:
-        asyncio.run(run_bench(cfg, args.bench))
+        try:
+            asyncio.run(run_bench(cfg, args.bench))
+        except SeatCredentialsMissing as exc:
+            print(f"\nCannot start: {exc}", file=sys.stderr)
+            sys.exit(1)
         return
 
     if args.canary is not None:
@@ -216,6 +221,9 @@ def main() -> None:
 
     try:
         asyncio.run(run(cfg))
+    except SeatCredentialsMissing as exc:
+        print(f"\nCannot start: {exc}", file=sys.stderr)
+        sys.exit(1)
     except (DecompositionRejected, BudgetExceeded) as exc:
         print(f"\nRun aborted before any ticket started: {exc}", file=sys.stderr)
         sys.exit(1)

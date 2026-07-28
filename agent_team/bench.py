@@ -31,6 +31,7 @@ import yaml
 
 from . import council, judgments, reliability
 from .checks import tamper_scan
+from .reviewers import check_seat_credentials
 from .models import Verdict
 from .runner import Budget
 
@@ -282,6 +283,9 @@ async def run_bench(cfg: dict, gold_dir: str) -> dict:
     cases = load_gold(gold_dir)
     if not cases:
         raise ValueError(f"no valid gold cases found in {gold_dir}")
+    # A benchmark run with a dead seat measures the dead seat, not the council:
+    # it would report 100% recall and 0% specificity and look like a wolf-crier.
+    check_seat_credentials(cfg, council.REVIEWERS)
     log.info("benchmarking council on %d gold case(s)", len(cases))
 
     budget_cap = (cfg.get("budget") or {}).get("per_ticket_usd")

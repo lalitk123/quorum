@@ -6,10 +6,11 @@ import asyncio
 import logging
 from pathlib import Path
 
-from . import canary as canary_mod
+from . import canary as canary_mod, council
 from .backlog import load_backlog
 from .decomposer import decompose
 from .models import Outcome, Ticket, TicketResult
+from .reviewers import check_seat_credentials
 from .runner import Budget
 from .worker import run_ticket
 
@@ -61,6 +62,12 @@ async def _load_tickets(cfg: dict, run_budget: Budget) -> list[Ticket]:
 
 
 async def run(cfg: dict) -> list[TicketResult]:
+    # Cheap deterministic preconditions first — before the decomposer spends a
+    # token. A seat that cannot authenticate votes reject on every review, which
+    # is fail-closed and correct, but silently turns the whole run into an
+    # expensive way to reject good code.
+    check_seat_credentials(cfg, council.REVIEWERS)
+
     budget_cfg = cfg.get("budget") or {}
     run_budget = Budget(budget_cfg.get("per_run_usd"), "run")
 

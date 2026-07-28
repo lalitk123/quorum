@@ -168,6 +168,11 @@ methodology + infrastructure, with results that sharpen as the log grows.
   Condition-sliceable (`for_condition`) so a security-heavy diff pulls the seats
   that have measurably caught security defects. The greedy trail records which
   estimator decided each step — an auditable record of why each seat was chosen.
+  **Two-objective** since the 20-case corpus caught it optimizing detection
+  alone and recommending a 50%-specificity wolf-crier: an optional
+  `target_specificity` floor (`Π specificityᵢ`, matching the unanimous gate)
+  refuses a seat that would make the council reject clean diffs, and the report
+  says when the floor is what blocked the detection target.
 - **Independence audit** (`agent_team/independence.py`, `python main.py --independence`).
   The council's two core formulas — the Bayesian posterior `Π LRᵢ` and the
   selector's `1 - Π(1 - sᵢ)` — both assume seats err *independently*. That is the
@@ -249,18 +254,87 @@ methodology + infrastructure, with results that sharpen as the log grows.
   (`canary.baseline_floor`). Unit-tested.
 - Goal → council-approved DAG decomposition; dependency-aware scheduling;
   stacked PRs; file-overlap locks; human-only merge.
+- **Release readiness** (MIT `LICENSE`, `CONTRIBUTING.md`, issue templates,
+  cost/safety warnings up front, conservative default budget caps). The
+  judgment corpora are committed under `bench/judgments/`, so every figure in
+  the README is reproducible by a stranger for **$0** instead of an $8 bench
+  run — the project claims measured trust, so its own numbers have to be
+  checkable without trusting this process.
+- **Reviewed and hardened** (two code-review passes + a security review, all
+  findings fixed). The pattern worth remembering: the implementations were
+  mostly sound, and the real defects lived in the **gap between correct code
+  and correct claims**.
+  - *Critical* — `--verify-receipts` could not detect a forged audit log. It
+    checked each signature against a public key carried **inside the record**,
+    and nothing pinned an expected key, so anyone able to write the log could
+    re-sign a fabricated history and get "verified", exit 0. Now `audit.public_key`
+    pins the signer; unpinned runs report NOT AUTHENTICATED, print the key
+    actually observed, and exit 2 rather than overstate what was proven.
+  - The `--bench` Bayesian demo used the gold set's own **65% defect ratio** as
+    its prior — a benchmark artifact, since a real review stream is
+    overwhelmingly clean. It manufactured a false reject at P=0.509. Now a
+    neutral 0.5, printed in the header so the figure is reproducible.
+  - A seat whose backend died took down the whole ticket (only `AgentRunError`
+    was caught) — now one fail-closed reject naming the cause, so the
+    escalation report survives.
+  - Receipts recorded `seats=len(verdicts)`, so early exit wrote a 3-of-5
+    majority down as a *unanimous* 3-of-3 panel; `seats_total` now carries the
+    true size.
+  - `--select` reported a specificity-floor-blocked council as "empty
+    reliability model", sending operators after a judgment log that was
+    already there.
+  - Ticket ids reached a filesystem path unvalidated; traversal was blocked
+    only incidentally by git's ref rules. Now an explicit allowlist, enforced
+    at the sink.
+- **First live end-to-end run** ($1.62): goal → 2-ticket DAG → plan gate →
+  worktree implementation → pre-push gate → correct fail-closed escalation on a
+  real scope violation (the worker deleted a file the ticket forbade touching —
+  visible in `--stat` only as a harmless `| 0`). It found what unit tests
+  structurally cannot: `commit_all` did `git add -A`, so worker-generated
+  bytecode entered the reviewed diff and burned a whole rejection round.
+  Staging now runs under a conservative artifact excludes file — conservative
+  because withholding real work would let the council approve a diff that does
+  not match the worktree, the one fail-*open* direction this system must never
+  take — and anything withheld is logged, never dropped silently.
+- **Seat credential pre-flight.** A seat that cannot authenticate fails closed
+  on every review, which is correct in isolation and ruinous as a first run:
+  the majority plan gate still passes, the unanimous push gate never does, and
+  the run pays to watch a worker revise good code against objections that were
+  never real. Both `run` and `--bench` now verify every configured seat's
+  credentials before the first token is spent and abort naming the seat, the
+  missing variable, and the two ways out.
 
 ## Next: reliability
 
-- **Grow the gold set + tune from it — top priority; unblocks RQ2.** The
-  measurement harness exists and a first real `--bench` run landed 15 labeled
-  judgments across 3 gold cases — too few to trust `--reliability` / `--select`
-  (sensitivity CI width ≈ 0.57, and `--select` currently over-fits, recommending
-  a seat that false-rejects clean code). Grow `bench/gold/` toward 30–200 labeled
-  diffs from the real distribution (use `mutation.py` for bulk labeled-bad diffs),
-  then re-derive the per-seat κ / detection numbers and let `--select` right-size
-  the council on real statistical power instead of synthetic numbers. This one
-  item gates both the credible RQ1 numbers and the RQ2 council-shrink.
+- **Grow the gold set — still the top priority; it gates every other claim.**
+  The corpus is now **20 cases / 100 labeled judgments** (was 3/15), committed as
+  reproducible snapshots under `bench/judgments/`, and it has already paid for
+  itself: it exposed `--select`'s specificity blindness, refuted an assumption
+  that the OpenAI seats were the wolf-criers (it was `qa`), and produced the RQ1
+  headline (calibrated aggregation 20/20 vs the naive unanimous gate 15/20).
+  But at **n=7 clean cases** the specificity CIs are still ~0.55 wide, which is
+  what now blocks further reviewer tuning — see the `qa` entry below. Push toward
+  30–200 (use `mutation.py` for bulk labeled-bad diffs). Two shapes are worth
+  more than volume:
+  - **clean changes that look alarming** — the scarce half of the corpus, and the
+    only thing that measures specificity, which is where the seats are weak;
+  - **defects subtle enough that two or more seats miss them together** — the
+    independence audit currently reports a clean bill of health (φ≈0) precisely
+    because every miss in this corpus is distributed. Without correlated-failure
+    cases that audit cannot demonstrate the gap it exists to catch.
+- **Tune `product`, and re-tune `qa` once the corpus supports it.** Reviewer
+  personas are now a measured, fixable surface rather than a vague quality
+  worry. `qa` went **27% → 44% specificity with sensitivity unchanged at 96%**
+  by narrowing its persona to reject only when an untested path maps to a
+  concrete defect. `product` is now the weakest seat (~56%) and holds a solo veto
+  under unanimous + early exit — in the first live run it ended a round alone.
+  Its rejection there was *correct*, but the risk profile is real. Blocked on
+  corpus growth: tuning against n=7 clean fits noise, not signal.
+- **Track per-seat output-format reliability.** The first live run had `product`
+  (gpt-5.1) emit malformed JSON; the fail-closed path handled it correctly
+  (unparseable → reject), but a substantively *correct* objection was lost to a
+  serialization failure and charged as a rejection round. That is a measurable
+  cost the judgment log does not yet record.
 - **Populate `mutation_score` in the live trust score.** `worker._build_trust`
   weights a mutation score it never sets per ticket (only the offline `--mutants`
   path produces one). Wire a per-ticket mutation pass so the live trust score
