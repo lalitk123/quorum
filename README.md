@@ -184,11 +184,21 @@ judgments across the five seats), not planted — and the seats are genuinely
 different instruments. `security` trades sensitivity (75% — it misses subtle
 *non*-security logic bugs) for caution; `qa` and `product` catch nearly every
 defect (96%) but block clean code far more often. That spread is the whole point
-of weighting: on this corpus, reliability-weighted aggregation classified **19 of
-20 cases correctly where the naive unanimous gate got only 15** — the gate
-rejected five of the seven clean changes because one crying-wolf seat sank each,
-while the posterior discounted those seats and recovered them. (Small corpus,
-wide CIs — the contribution is the method; the numbers sharpen as the log grows.)
+of weighting: on this corpus, reliability-weighted aggregation classified **all 20
+cases correctly where the naive unanimous gate got only 15** — the gate rejected
+five of the seven clean changes, while the posterior discounted the seats doing
+the rejecting and recovered every one. Note what the gate actually failed on:
+those five were not sunk by a lone outlier. Three of them (G5, G6, G7) were
+rejected by **three of the five seats at once**, and only one was a single-seat
+veto. A crying-wolf *bloc* is the harder case, and it is the one calibrated
+weighting handles that a vote count cannot — three seats with poor measured
+specificity carry less evidence than their headcount suggests.
+
+Two honest caveats. This is an **in-sample** demonstration: the reliability model
+is estimated from the same 20 cases it then scores, so it shows the aggregation
+rule recovering labels the individual seats got wrong — not out-of-sample
+generalization. And the corpus is small with wide CIs. The contribution is the
+method; the numbers sharpen as the log grows.
 
 **The loop closes on itself.** These per-seat numbers are not just a report card;
 they are a work queue. An earlier run measured `qa` at **27% specificity** against
@@ -230,12 +240,12 @@ Since every seat reviews every case, the judgment log already contains the full
 on the current 20-case corpus:
 
 ```console
-$ python main.py --independence
+$ python main.py --independence bench/judgments/2026-07-26-qa-tuned.jsonl
 === Independence audit (is the jury really decorrelated?) ===
   full council ['adversary', 'architect', 'product', 'qa', 'security']
     independence model predicts P(detect) = 100.0%
     measured from the joint          = 96.4% (90% CI lower bound 86.5%, n=13)
-    inflation (predicted - measured) = +3.6%   <-- mildly optimistic
+    inflation (predicted - measured) = +3.6%   <-- independence is OPTIMISTIC; the selector under-provisions
 
   mean pairwise φ = 0.00   design effect = 1.00
   5 seats are worth 5.0 independent ones (evidence discount 1.00)
@@ -283,11 +293,14 @@ across defect cases, apply Jensen's inequality, and a hard bound falls out:
 It is distribution-free, and it bounds every accuracy number this platform reports.
 A reviewer that flips 32% of its re-runs cannot have sensitivity above 80%, however
 well it scored on a single pass. Measured over 17 repeat pairs — a seat judging the
-same case on two separate `--bench` runs (this needs a corpus with repeat
-observations; a single-pass log reports "all single-pass" and collects none):
+same case on two separate `--bench` runs. This needs a corpus with repeat
+observations, so it is measured on the **pre-tuning** snapshot — the single-pass
+one backing the table above reports "all single-pass" and collects no pairs.
+Mind the seam: the `qa` row below is therefore the *old* qa persona, not the
+retuned one in the reliability table, and the two must not be read across.
 
 ```console
-$ python main.py --stability
+$ python main.py --stability bench/judgments/2026-07-25-pre-qa-tuning.jsonl
 === Repeat-run stability (test-retest) ===
   seat          flip rate [90% CI]   pairs   kappa   ceiling   runs@5%
   security       12% [  0- 29]        17    0.75     94%         3
