@@ -49,8 +49,9 @@ class Receipt:
     timestamp: str                     # ISO-8601, supplied by the caller
     council_rule: str
     approvals: int
-    seats: int
+    seats: int                         # seats POLLED (early exit may stop short)
     verdicts: list[dict] = field(default_factory=list)  # [{reviewer, approve}]
+    seats_total: int = 0               # full panel size; 0 = not recorded (legacy)
     risk_level: str = ""
     merge_disposition: str = ""
     trust_score: float = 0.0
@@ -201,7 +202,38 @@ def verify_log(receipts_file: str, pinned_public_key_hex: str | None = None) -> 
     return results
 
 
-def format_verification(results: list[dict]) -> str:
+def observed_public_keys(receipts_file: str) -> list[str]:
+    """Every distinct signing key appearing in the log, in first-seen order.
+
+    More than one means the key rotated — or that part of the log was written by
+    a different signer, which is what a wholesale forgery looks like.
+    """
+    path = Path(receipts_file)
+    if not path.exists():
+        return []
+    seen: list[str] = []
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            key = json.loads(line).get("public_key")
+        except json.JSONDecodeError:
+            continue
+        if key and key not in seen:
+            seen.append(key)
+    return seen
+
+
+def format_verification(results: list[dict], pinned_public_key_hex: str | None = None,
+                        observed_keys: list[str] | None = None) -> str:
+    """Render the verification report.
+
+    Without a pinned key this reports *internal consistency only*, and says so.
+    Signatures are checked against a key carried inside each record, so a forger
+    who can write the file can re-sign every receipt with their own key and
+    produce a log that is perfectly self-consistent. Authenticity requires
+    comparing against a key obtained out-of-band — that is what pinning is.
+    """
     if not results:
         return "no receipts found."
     lines = ["", "=== Audit receipt verification ==="]
@@ -217,6 +249,28 @@ def format_verification(results: list[dict]) -> str:
         mark = "ok  " if good else "FAIL"
         lines.append(f"  [{mark}] #{r['index']:<3} {r['action']:<10} {r['ticket_id']:<16}"
                      + (f"  <- {', '.join(flags)}" if flags else ""))
-    lines.append(f"{ok}/{len(results)} receipt(s) verified"
+
+    consistent = f"{ok}/{len(results)} receipt(s)"
+    if pinned_public_key_hex:
+        lines.append(f"{consistent} verified against pinned key "
+                     f"{pinned_public_key_hex[:16]}…"
+                     + ("" if ok == len(results) else "  — AUDIT TRAIL COMPROMISED"))
+        return "\n".join(lines)
+
+    lines.append(f"{consistent} internally consistent"
                  + ("" if ok == len(results) else "  — AUDIT TRAIL COMPROMISED"))
+    lines.append("")
+    lines.append("  NOT AUTHENTICATED — no public key was pinned.")
+    lines.append("  Each signature was checked against a key carried inside the record "
+                 "itself, so")
+    lines.append("  this proves the log is self-consistent, NOT that your council "
+                 "produced it. Anyone")
+    lines.append("  who can write this file can re-sign every entry with their own key "
+                 "and pass.")
+    for k in observed_keys or []:
+        lines.append(f"    key observed in log: {k}")
+    if observed_keys and len(observed_keys) > 1:
+        lines.append("    ^ MORE THAN ONE SIGNER — investigate before pinning either.")
+    lines.append("  Confirm the key out-of-band, then set audit.public_key in "
+                 "config.yaml to pin it.")
     return "\n".join(lines)

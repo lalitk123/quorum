@@ -105,10 +105,19 @@ def main() -> None:
         from agent_team import receipts
         audit = cfg.get("audit") or {}
         path = args.verify_receipts or audit.get("receipts_file", ".agent_team/receipts.jsonl")
-        results = receipts.verify_log(path)
-        print(receipts.format_verification(results))
+        pinned = audit.get("public_key") or None
+        results = receipts.verify_log(path, pinned_public_key_hex=pinned)
+        observed = receipts.observed_public_keys(path)
+        print(receipts.format_verification(results, pinned_public_key_hex=pinned,
+                                           observed_keys=observed))
         if any(not (r["sig_ok"] and r["chain_ok"]) for r in results):
             sys.exit(1)
+        # Fail closed on an unauthenticated check: without a pinned key the log's
+        # signatures are self-referential, so "verified" would overstate what was
+        # proven. Receipts exist to be trusted by a third party; a check that
+        # cannot detect wholesale forgery must not exit 0 as though it had.
+        if results and not pinned:
+            sys.exit(2)
         return
 
     if args.reliability is not None:

@@ -408,9 +408,18 @@ python main.py --verify-receipts        # checks signatures + the hash chain
 Because each receipt carries the hash of the previous one, tampering with a
 payload fails its signature *and* breaks the chain for every later receipt, and
 deleting a receipt from the middle is detected too. The command exits non-zero if
-any receipt fails — a drop-in audit gate for regulated contexts. The signing key
-is created (mode `0600`) on first use if absent; back it up and pin its public
-key, since receipts are only meaningful against a stable operator-held key.
+any receipt fails — a drop-in audit gate for regulated contexts.
+
+**Pin the public key, or this proves less than it looks like.** Each receipt
+carries the key that signed it, so checking signatures *without* a pinned key
+only establishes that the log agrees with itself — an attacker who can write the
+file can re-sign every entry with their own key and produce a forgery that passes
+every structural check. Authenticity requires comparing against a key you hold
+independently. So set `audit.public_key` in `config.yaml`; until you do,
+`--verify-receipts` reports **NOT AUTHENTICATED**, prints the key it actually
+observed, and exits `2` rather than claiming a verification it cannot perform.
+The signing key is created (mode `0600`) on first use if absent — back it up,
+confirm its public half out-of-band, then pin it.
 
 `dry_run: true` (the default) stops after council approval: the branch and
 worktree exist locally under `<repo>/.worktrees/`, nothing is pushed. Flip it

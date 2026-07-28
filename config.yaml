@@ -161,6 +161,16 @@ audit:
   enabled: false
   signing_key_file: .agent_team/audit_key.pem   # Ed25519 private key; created (0600) if missing
   receipts_file: .agent_team/receipts.jsonl     # append-only, hash-chained log
+  public_key:                                   # PIN THE SIGNING KEY (hex) — required for a
+                                                # meaningful verification. Each receipt carries
+                                                # the key that signed it, so an unpinned check
+                                                # only proves the log agrees with itself: anyone
+                                                # who can write the file can re-sign every entry
+                                                # with their own key and pass. Pinning compares
+                                                # against a key you obtained out-of-band.
+                                                # `--verify-receipts` prints the observed key and
+                                                # exits 2 while this is unset. Confirm that key is
+                                                # yours, then paste it here.
 
 # When true, workers stop after council approval — no push, no PR.
 # Flip to false once you trust the pipeline.

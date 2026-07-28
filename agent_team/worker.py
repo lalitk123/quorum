@@ -102,7 +102,11 @@ async def _emit_receipt(cfg: dict, ticket: Ticket, ws: Workspace, commit_sha: st
             timestamp=datetime.now(timezone.utc).isoformat(),
             council_rule=council_rule,
             approvals=sum(v.approve for v in decision.verdicts),
+            # Early exit stops polling once the outcome is forced, so the verdict
+            # list can be shorter than the panel. Record both: a receipt reading
+            # "3 of 3 approved" would misstate a 3-of-5 majority as unanimous.
             seats=len(decision.verdicts),
+            seats_total=len(council.REVIEWERS),
             verdicts=[{"reviewer": v.reviewer, "approve": v.approve}
                       for v in decision.verdicts],
             risk_level=assessment.level.value,
