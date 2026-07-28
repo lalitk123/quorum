@@ -253,7 +253,20 @@ def recall_per_dollar(model: dict[str, SeatReliability],
 def format_selection(sel: Selection, model: dict[str, SeatReliability]) -> str:
     lines = ["", "=== Adaptive council selection (RQ2) ==="]
     if not sel.seats:
-        return "\n".join(lines + ["  (no seats selected — empty reliability model)"])
+        if not model:
+            return "\n".join(lines + ["  (no seats selected — empty reliability model)"])
+        # The model is populated, so every candidate was refused: the specificity
+        # floor rejected them all, or the budget could not afford even one. Naming
+        # the real cause matters — the operator would otherwise go hunting for a
+        # missing judgment log that is sitting right there.
+        return "\n".join(lines + [
+            f"  (no seats selected, though {len(model)} seat(s) were available: "
+            f"{', '.join(sorted(model))})",
+            "  Every candidate was refused. Most likely the specificity floor "
+            "(selection.target_specificity) is unsatisfiable — no seat clears it, so "
+            "any council would cry wolf on clean diffs. Lower the floor, improve the "
+            "seats, or check that selection.budget can afford at least one seat.",
+        ])
     lines.append(f"  selected: {', '.join(sel.seats)}")
     lines.append(f"  team detection   P(catch defect)  = {sel.detection:.1%}  "
                  f"at cost {sel.cost:g}")

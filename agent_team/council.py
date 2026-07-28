@@ -17,7 +17,7 @@ import asyncio
 from . import evidence
 from .models import CouncilDecision, Verdict
 from .reviewers import SeatSpec, resolve_seat, run_reviewer
-from .runner import AgentRunError, Budget, extract_json_block
+from .runner import Budget, BudgetExceeded, extract_json_block
 
 REVIEWERS: dict[str, str] = {
     "architect": (
@@ -96,8 +96,18 @@ async def _review_one(
     system_prompt = persona + _verdict_instructions(spec.has_file_tools)
     try:
         text = await run_reviewer(spec, system_prompt, material, cwd, budgets)
-    except AgentRunError as exc:
-        return Verdict(reviewer=name, approve=False, reasoning=f"reviewer errored: {exc}")
+    except asyncio.CancelledError:
+        raise                          # early-exit cancellation is not a seat failure
+    except BudgetExceeded:
+        raise                          # a tripped cap must abort the run, not vote
+    except Exception as exc:
+        # Fail closed at the *seat*, not the ticket. Any backend failure — an
+        # AgentRunError, an SDK transport/decode error, an unforeseen bug — becomes
+        # one rejecting vote with the cause recorded, so the panel still returns a
+        # decision and the escalation report explains it. Letting it propagate would
+        # abort the whole ticket and lose that report.
+        return Verdict(reviewer=name, approve=False,
+                       reasoning=f"reviewer errored ({type(exc).__name__}): {exc}")
 
     parsed = extract_json_block(text)
     if not parsed or parsed.get("verdict") not in ("approve", "reject"):

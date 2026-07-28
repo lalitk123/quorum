@@ -133,6 +133,40 @@ async def test_approve_with_evidence_passes(monkeypatch):
     assert v.evidence == ["app.py:3 checked bounds"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [
+    RuntimeError("claude CLI not found"),      # SDK transport failure
+    ValueError("malformed SDK payload"),       # unforeseen backend bug
+])
+async def test_seat_backend_failure_fails_closed_at_the_seat(monkeypatch, exc):
+    """A backend that dies must cost one rejecting vote, not the whole ticket.
+
+    Only AgentRunError used to be caught, so an SDK transport error escaped the
+    seat and aborted the ticket — losing the escalation report the human triaging
+    it needs. Any exception now becomes a fail-closed reject naming the cause.
+    """
+    async def boom(spec, system_prompt, material, cwd, budgets):
+        raise exc
+    monkeypatch.setattr("agent_team.council.run_reviewer", boom)
+    v = await _review_one("qa", "persona", "material", "/tmp",
+                          SeatSpec("claude", "sonnet", has_file_tools=True), ())
+    assert v.approve is False
+    assert type(exc).__name__ in v.reasoning      # cause is preserved for triage
+
+
+@pytest.mark.asyncio
+async def test_budget_exceeded_aborts_rather_than_voting(monkeypatch):
+    """A tripped cap is a run-level abort, not a reviewer opinion — it must
+    propagate so the ticket escalates as BUDGET_EXCEEDED with the worktree kept,
+    instead of being silently laundered into a reject vote."""
+    async def broke(spec, system_prompt, material, cwd, budgets):
+        raise BudgetExceeded("per-ticket", 10.0, 11.0)
+    monkeypatch.setattr("agent_team.council.run_reviewer", broke)
+    with pytest.raises(BudgetExceeded):
+        await _review_one("qa", "persona", "material", "/tmp",
+                          SeatSpec("claude", "sonnet", has_file_tools=True), ())
+
+
 # ---- Aggregation -------------------------------------------------------------
 
 def _decision(*approvals):

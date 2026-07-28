@@ -331,10 +331,17 @@ def _bayesian_vs_gate(results: list[CaseResult], model: dict, metrics: dict) -> 
     In-sample (the model was estimated from a log that includes this run), so this
     demonstrates the aggregation, not a held-out result. Reject if the posterior
     P(defect) crosses 0.5; compare against what the actual gate did.
+
+    The prior is deliberately a neutral 0.5, NOT the gold set's own defect ratio.
+    A gold corpus over-samples defects by construction (this one is ~65% bad),
+    while a real review stream is overwhelmingly clean — feeding that ratio in as
+    a prior would bias every posterior toward "defect" and manufacture false
+    rejects that say more about how the benchmark was assembled than about the
+    council. The prior is printed so the numbers below are reproducible.
     """
-    n = metrics["n_scored"] or 1
-    base_rate = metrics["n_bad"] / n
-    lines = ["", "Bayesian trust vs gate (in-sample demo; reject if P(defect) >= 0.5):"]
+    base_rate = 0.5
+    lines = ["", f"Bayesian trust vs gate (in-sample demo; prior P(defect)="
+                 f"{base_rate:g}; reject if P(defect) >= 0.5):"]
     agree = 0
     for r in results:
         if r.error:

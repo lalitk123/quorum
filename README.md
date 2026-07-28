@@ -198,7 +198,11 @@ Two honest caveats. This is an **in-sample** demonstration: the reliability mode
 is estimated from the same 20 cases it then scores, so it shows the aggregation
 rule recovering labels the individual seats got wrong — not out-of-sample
 generalization. And the corpus is small with wide CIs. The contribution is the
-method; the numbers sharpen as the log grows.
+method; the numbers sharpen as the log grows. (Both figures use a neutral 0.5
+prior, which `--bench` prints in its header. Deliberately *not* the gold set's own
+~65% defect ratio: a benchmark over-samples defects by construction while a real
+review stream is overwhelmingly clean, so using it as a prior would manufacture
+false rejects that describe the corpus rather than the council.)
 
 **The loop closes on itself.** These per-seat numbers are not just a report card;
 they are a work queue. An earlier run measured `qa` at **27% specificity** against

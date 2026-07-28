@@ -5,8 +5,8 @@ import pytest
 
 from agent_team.reliability import SeatReliability
 from agent_team.selection import (
-    for_condition, recall_per_dollar, select_reviewers, select_with_repeats,
-    team_detection,
+    for_condition, format_selection, recall_per_dollar, select_reviewers,
+    select_with_repeats, team_detection,
 )
 
 
@@ -213,3 +213,24 @@ def test_specificity_floor_applies_to_repeat_selection_too():
     sel = select_with_repeats(m, target_detection=0.90, max_repeats=5,
                               target_specificity=0.80)
     assert sel.seats == ["solid"]
+
+
+def test_unsatisfiable_floor_names_the_floor_not_an_empty_model():
+    """An all-blocked selection must not be reported as 'empty reliability model'.
+
+    The floor blocking every seat and having no data at all produce the same empty
+    seat list but need opposite fixes; misreporting the first as the second sends
+    the operator hunting for a judgment log that is sitting right there.
+    """
+    m = _model2(a=(0.90, 0.40), b=(0.95, 0.30))       # neither clears a 0.80 floor
+    sel = select_reviewers(m, target_detection=0.95, target_specificity=0.80)
+    assert sel.seats == [] and not sel.detection_target_met
+    out = format_selection(sel, m)
+    assert "empty reliability model" not in out
+    assert "target_specificity" in out
+    assert "a, b" in out                              # the refused candidates are named
+
+
+def test_genuinely_empty_model_still_says_so():
+    sel = select_reviewers({}, target_detection=0.95)
+    assert "empty reliability model" in format_selection(sel, {})
