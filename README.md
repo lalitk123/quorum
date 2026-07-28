@@ -10,6 +10,19 @@ twice — once to approve its plan, and again to approve its diff before anythin
 pushed to GitHub. The differentiator is not the agents that write code — it is the
 trustworthy, auditable, fail-closed *review gate* they must pass.
 
+> [!IMPORTANT]
+> **This spends real money and writes real code.** Every gate runs five reviewer
+> agents, and a worker is gated twice — so a single ticket is ~10 model calls on
+> top of the worker's own. A 20-case benchmark run costs roughly **$8** at the
+> configured models. Set `budget.per_ticket_usd` / `budget.per_run_usd` in
+> `config.yaml` before your first run; a tripped budget fails closed.
+>
+> Quorum ships with **`dry_run: true`**, which stops workers after council
+> approval — nothing is pushed and no PR is opened. Setting `dry_run: false`
+> grants autonomous agents push access to the repo you point at. Point
+> `repo_path` at a scratch clone until you trust it. Merging is always a human
+> action; there is no auto-merge, by design.
+
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design and
 [ROADMAP.md](ROADMAP.md) for the research program — Quorum's north star is an **AI
 software assurance layer** whose reviewers are themselves *measured instruments*,
@@ -150,6 +163,10 @@ judged on three cases and one judged on three hundred aren't treated alike.
 ```bash
 python main.py --bench          # grows the labeled corpus + reports reliability
 python main.py --reliability    # prints the current per-seat model
+
+# Verify the numbers below without spending anything — every figure in this
+# README is computed from a committed snapshot (see bench/judgments/README.md):
+python main.py --reliability bench/judgments/2026-07-26-qa-tuned.jsonl
 ```
 
 ```
