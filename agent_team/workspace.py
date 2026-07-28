@@ -12,6 +12,8 @@ import asyncio
 import subprocess
 from pathlib import Path
 
+from .models import invalid_ticket_id
+
 MAX_DIFF_CHARS = 60_000
 
 
@@ -35,6 +37,14 @@ async def _git_async(repo: str | Path, *args: str) -> str:
 class Workspace:
     def __init__(self, repo_path: str, base_branch: str, ticket_id: str,
                  start_refs: list[str] | None = None):
+        # Validate at the sink, not just at the sources: this is where the id
+        # stops being data and becomes a path. `Path / x` silently discards the
+        # prefix when x is absolute, so an unchecked id escapes the repo entirely
+        # rather than nesting under it. Fail closed — a ticket we cannot place
+        # safely is a ticket we do not start.
+        reason = invalid_ticket_id(ticket_id)
+        if reason:
+            raise ValueError(reason)
         self.repo = Path(repo_path)
         self.base = base_branch
         self.branch = f"agent/{ticket_id}"

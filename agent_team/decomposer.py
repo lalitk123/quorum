@@ -12,7 +12,7 @@ import logging
 from claude_agent_sdk import ClaudeAgentOptions
 
 from . import council
-from .models import Ticket
+from .models import Ticket, invalid_ticket_id
 from .runner import Budget, extract_json_block, run_agent
 
 log = logging.getLogger("decomposer")
@@ -53,6 +53,14 @@ def _parse_tickets(text: str) -> list[Ticket] | str:
             ))
         except (KeyError, TypeError) as exc:
             return f"Every ticket needs id, title, description: {exc}"
+
+    # Reject unusable ids here rather than at the worktree: caught now it is one
+    # more revision round with a precise objection, caught later it is a ticket
+    # that dies mid-run after the plan gate has already been paid for.
+    for t in tickets:
+        reason = invalid_ticket_id(t.id)
+        if reason:
+            return reason
 
     ids = [t.id for t in tickets]
     if len(set(ids)) != len(ids):

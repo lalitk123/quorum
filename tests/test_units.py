@@ -14,9 +14,11 @@ from agent_team.checks import classify_changed_files, tamper_scan
 from agent_team import council
 from agent_team.council import _outcome_decided, _review_one
 from agent_team.decomposer import _parse_tickets
+from agent_team import models
 from agent_team.models import CouncilDecision, Verdict
 from agent_team.reviewers import SeatSpec, _seat_cost, resolve_seat
 from agent_team.runner import Budget, BudgetExceeded, extract_json_block
+from agent_team.workspace import Workspace
 
 
 # ---- Budget circuit breaker --------------------------------------------------
@@ -338,3 +340,54 @@ async def test_openai_seat_cost_recorded_when_cancelled_midflight(monkeypatch):
     # The detached, already-billed call records its own cost once it finishes.
     await asyncio.gather(*reviewers._PENDING_BILLED_CALLS, return_exceptions=True)
     assert budget.spent == pytest.approx(3.0)  # 1M prompt tokens * $3/Mtok
+
+
+# ---- Ticket ids are an injection sink, not a label ---------------------------
+# An id becomes `<repo>/.worktrees/<id>` and the git ref `agent/<id>`. Traversal
+# attempts used to die at `git worktree add` only because git's ref rules reject
+# `..` and stray slashes — git defending us by accident. These pin the guard.
+
+TRAVERSAL_IDS = [
+    "/tmp/pwned",            # absolute: `Path(repo) / "/tmp/pwned"` DISCARDS the repo prefix
+    "../../../../tmp/evil",  # classic relative traversal
+    "a/../../b",             # traversal hidden mid-path
+    ".ssh",                  # dotfile directory
+    "..",
+    ".",
+    "",
+    "with space",
+    "semi;colon",
+    "x" * 65,                # over the length cap
+]
+
+
+@pytest.mark.parametrize("bad", TRAVERSAL_IDS)
+def test_unsafe_ticket_ids_are_rejected(bad):
+    assert models.invalid_ticket_id(bad)
+
+
+@pytest.mark.parametrize("good", ["T1", "gh-42", "auth.refresh", "a_b-c.1", "x"])
+def test_ordinary_ticket_ids_are_accepted(good):
+    assert models.invalid_ticket_id(good) == ""
+
+
+@pytest.mark.parametrize("bad", TRAVERSAL_IDS)
+def test_workspace_refuses_to_place_an_unsafe_ticket(bad):
+    """The sink guard: fail closed before the id becomes a path, since
+    `Path("/repo") / "/tmp/pwned"` silently yields `/tmp/pwned`."""
+    with pytest.raises(ValueError):
+        Workspace("/repo", "main", bad)
+
+
+def test_workspace_path_stays_under_the_repo_for_valid_ids():
+    ws = Workspace("/repo", "main", "T1")
+    assert str(ws.path) == "/repo/.worktrees/T1"
+    assert ws.branch == "agent/T1"
+
+
+def test_decomposer_rejects_an_unsafe_id_as_revision_feedback():
+    """Caught at parse time it costs one revision round with a precise objection;
+    caught at the worktree it kills the ticket after the plan gate was paid for."""
+    out = _parse_tickets(
+        '{"tickets":[{"id":"../../etc/cron.d/x","title":"t","description":"d"}]}')
+    assert isinstance(out, str) and "not allowed" in out

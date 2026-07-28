@@ -1,5 +1,28 @@
+import re
 from dataclasses import dataclass, field
 from enum import Enum
+
+# A ticket id becomes a filesystem path (`<repo>/.worktrees/<id>`) and a git ref
+# (`agent/<id>`), so it is an injection sink, not a label. Ids reach it from a
+# model's decomposition output and from tasks.yaml — neither is trustworthy
+# enough to interpolate into a path unchecked. Today a traversal attempt happens
+# to die at `git worktree add`, because git's ref rules reject `..`, `//`, and
+# leading/trailing slashes; that is git defending us by accident, not a decision
+# this codebase made. An allowlist makes it a decision.
+TICKET_ID_PATTERN = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+
+
+def invalid_ticket_id(ticket_id: str) -> str:
+    """Return a human/model-readable reason the id is unusable, else ""."""
+    if not ticket_id:
+        return "ticket id is empty"
+    if not TICKET_ID_PATTERN.match(ticket_id):
+        return (f"ticket id {ticket_id!r} is not allowed — use only letters, digits, "
+                "dot, dash, or underscore (max 64 chars, starting alphanumeric). "
+                "It becomes a directory name and a git branch name.")
+    if ticket_id in (".", "..") or ticket_id.startswith("."):
+        return f"ticket id {ticket_id!r} is not allowed — it must not start with a dot."
+    return ""
 
 
 @dataclass
